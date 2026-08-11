@@ -1,0 +1,18 @@
+{
+  "id": "agentbox",
+  "version": "0.1.0",
+  "name": "agentbox agents",
+  "description": "Installs coding agent CLIs inside the dev container.",
+  "documentationURL": "https://github.com/kevinveenbirkenbach/agentbox",
+  "options": {
+    "agents": {
+      "type": "string",
+      "default": "@anthropic-ai/claude-code",
+      "description": "Space separated npm packages of the agent CLIs to install."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/node"
+  ]
+}
