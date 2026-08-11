@@ -1,0 +1,4 @@
+git@github.com:kevinveenbirkenbach/agentbox.git
+ssh://git@git.veen.world:2201/kevinveenbirkenbach/agentbox.git
+ssh://git@code.infinito.nexus:2201/kevinveenbirkenbach/agentbox.git
+https://pypi.org/project/agentbox-cli/
