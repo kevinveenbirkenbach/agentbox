@@ -15,6 +15,21 @@ CONTAINER_USER = "dev"
 CONTAINER_SSH_PORT = 2222
 EDITORS = ("code-oss", "codium", "code")
 GITIGNORE_ENTRY = cfg.MERGED_IN_PROJECT
+UP_BINARIES = ("docker", "npx", "ssh-keygen")
+EXEC_BINARIES = ("docker", "npx")
+
+
+def missing_binaries(names: tuple[str, ...]) -> list[str]:
+    return [name for name in names if shutil.which(name) is None]
+
+
+def require_binaries(names: tuple[str, ...]) -> int:
+    missing = missing_binaries(names)
+    if not missing:
+        return 0
+    print(f"✖ missing on this host: {', '.join(missing)}", file=sys.stderr)
+    print(f"  agentbox needs: {', '.join(names)}", file=sys.stderr)
+    return 3
 
 
 def state_dir() -> Path:
@@ -135,6 +150,10 @@ def up_command(workspace: Path, override: Path | None, rebuild: bool) -> list[st
 
 
 def cmd_up(args: argparse.Namespace) -> int:
+    blocked = require_binaries(UP_BINARIES)
+    if blocked:
+        return blocked
+
     workspace = args.workspace.resolve()
     state = state_dir()
     alias = claim_alias(workspace, state)
@@ -163,6 +182,10 @@ def cmd_up(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    blocked = require_binaries(EXEC_BINARIES)
+    if blocked:
+        return blocked
+
     workspace = args.workspace.resolve()
     state = state_dir()
     alias = alias_for(workspace, state)
@@ -187,6 +210,10 @@ def cmd_code(args: argparse.Namespace) -> int:
 
 
 def cmd_down(args: argparse.Namespace) -> int:
+    blocked = require_binaries(("docker",))
+    if blocked:
+        return blocked
+
     workspace = args.workspace.resolve()
     cid = container_id(workspace)
     if cid is None:

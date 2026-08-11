@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -184,6 +187,22 @@ class TestExecCommand(unittest.TestCase):
     def test_project_owned_config_needs_no_override(self) -> None:
         command = cli.exec_command(Path("/tmp/project"), None, ["zsh"])
         self.assertNotIn("--override-config", command)
+
+
+class TestBinaryPrecheck(unittest.TestCase):
+    def test_all_present(self) -> None:
+        with mock.patch.object(cli.shutil, "which", return_value="/usr/bin/thing"):
+            self.assertEqual(cli.missing_binaries(("docker", "npx")), [])
+
+    def test_missing_are_reported(self) -> None:
+        with mock.patch.object(cli.shutil, "which", side_effect=[None, "/usr/bin/npx"]):
+            self.assertEqual(cli.missing_binaries(("docker", "npx")), ["docker"])
+
+    def test_require_exits_nonzero_when_missing(self) -> None:
+        with mock.patch.object(cli.shutil, "which", return_value=None):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(cli.require_binaries(("docker",)), 3)
+        self.assertIn("docker", err.getvalue())
 
 
 class TestParser(unittest.TestCase):
