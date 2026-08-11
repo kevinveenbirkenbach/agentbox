@@ -9,7 +9,7 @@ description = ""
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Kevin Veen-Birkenbach", email = "kevin@veen.world" }]
-license = { text = "All rights reserved by Kevin Veen-Birkenbach" }
+license = { text = "MIT" }
 urls = { Homepage = "https://github.com/kevinveenbirkenbach/agentbox" }
 
 dependencies = []

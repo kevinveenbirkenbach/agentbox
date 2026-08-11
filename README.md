@@ -168,6 +168,10 @@ The feature source lives in `features/agentbox/`; publish it with `devcontainer 
 python -m unittest discover -s tests
 ```
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Author
 
 Kevin Veen-Birkenbach <kevin@veen.world>
