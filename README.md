@@ -64,10 +64,24 @@ What the picture says:
 ## Install
 
 ```bash
-pipx install .
+pipx install agentbox-cli
 ```
 
-Requires `docker`, `node` (the [devcontainer CLI](https://github.com/devcontainers/cli) is fetched via `npx`) and `ssh-keygen` on the host.
+The distribution is named `agentbox-cli` because `agentbox` is taken on PyPI; the command it installs is `agentbox`.
+
+Independent of PyPI, from a checkout:
+
+```bash
+make install
+```
+
+The package itself has no Python dependencies, but it drives three host binaries and refuses to start without them:
+
+| Binary | Used for |
+|---|---|
+| `docker` | building and running the sandbox |
+| `npx` (Node.js) | fetching the [devcontainer CLI](https://github.com/devcontainers/cli) |
+| `ssh-keygen` | the per-project key |
 
 ## Quickstart
 
@@ -162,11 +176,74 @@ The feature source lives in `features/agentbox/`; publish it with `devcontainer 
 - Network access is not restricted yet — the sandbox isolates the filesystem and the Docker daemon, not the internet.
 - The agent CLIs themselves are proprietary; only the sandbox around them is open source.
 
+## Other agents
+
+`AGENTBOX_AGENTS` is a space separated list of npm packages installed on first start. Override it per project in `.devcontainer/agentbox.local.json`:
+
+```json
+{
+  "containerEnv": {
+    "AGENTBOX_AGENTS": "@anthropic-ai/claude-code @openai/codex @google/gemini-cli"
+  }
+}
+```
+
+Then `agentbox up --rebuild` and `agentbox run codex`. Agents that are not npm packages (pipx tools, plain binaries) have no install path yet. The Pi agent (`@oh-my-pi/pi-coding-agent`, binary `omp`) needs bun rather than node.
+
+## Local LLMs
+
+The sandbox has its own network namespace, so an Ollama or LM Studio server running on the **host** is not reachable from inside by default. Punch one hole into `.devcontainer/agentbox.local.json`:
+
+```json
+{
+  "runArgs": ["--add-host=host.docker.internal:host-gateway"],
+  "containerEnv": {
+    "OLLAMA_BASE_URL": "http://host.docker.internal:11434",
+    "OLLAMA_HOST": "http://host.docker.internal:11434"
+  }
+}
+```
+
+What each agent does with that, verified in the e2e suite below:
+
+| Agent | Ollama | LM Studio | Invocation |
+|---|---|---|---|
+| codex | yes | yes | `codex exec -c model_provider=x -c model_providers.x.base_url=<url>/v1 -c model_providers.x.wire_api=responses -c model_providers.x.requires_openai_auth=false -m <model>` |
+| pi (`omp`) | yes | catalog discovery works | `omp --model ollama/<model>` with `OLLAMA_BASE_URL` set, or `omp --model lm-studio/<model>` |
+| Claude Code | via proxy | via proxy | Anthropic protocol only — needs a translator (e.g. LiteLLM) behind `ANTHROPIC_BASE_URL` |
+
+Three constraints found the hard way, each encoded in the e2e suite:
+
+- codex accepts only `wire_api = "responses"`; the chat-completions wire was removed. Both servers implement that endpoint.
+- `codex --oss` insists on a daemon at `localhost:11434` and ignores `OLLAMA_HOST`, so a remote endpoint needs an explicit provider.
+- Agent CLIs need a model that supports tool calling. `smollm2:135m` answers plain chat requests but fails every agent.
+
 ## Tests
 
+Everything at once — unit tests plus the end-to-end suite:
+
 ```bash
-python -m unittest discover -s tests
+make test
 ```
+
+Unit tests alone, no containers:
+
+```bash
+make test-unit
+```
+
+End-to-end against real local LLMs, fully isolated in compose — Ollama, LM Studio in headless server mode, and a runner carrying codex and pi. No host network, no API keys, no accounts:
+
+```bash
+make test-e2e                  # tears the stack down afterwards
+bash tests/e2e/run.sh --keep   # leaves it up for debugging
+```
+
+Models are pulled once into named volumes: `qwen2.5:0.5b` for Ollama, and for LM Studio the Hugging Face repository pinned in `tests/e2e/.env` — its CLI resolves search terms only against staff picks, so the source is a full URL rather than a name. Twelve checks then assert reachability, the native and OpenAI-compatible endpoints, and that codex and pi actually answer from a local model.
+
+The runner shares the LM Studio container's network namespace, so LM Studio sits on `localhost:1234` exactly as the agent CLIs expect while Ollama stays reachable by service name.
+
+Everything runs in CI on every push and pull request, and again before a release.
 
 ## License
 

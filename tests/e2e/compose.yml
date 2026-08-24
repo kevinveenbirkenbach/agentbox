@@ -1,0 +1,39 @@
+services:
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  lmstudio:
+    image: docker.io/lmstudio/llmster-preview:cpu
+    volumes:
+      - lmstudio-models:/root/.lmstudio
+    healthcheck:
+      test: ["CMD", "lms", "ls"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  runner:
+    build: .
+    network_mode: "service:lmstudio"
+    depends_on:
+      ollama:
+        condition: service_healthy
+      lmstudio:
+        condition: service_healthy
+    environment:
+      AGENTBOX_E2E_OLLAMA_URL: http://ollama:11434
+      AGENTBOX_E2E_MODEL: ${AGENTBOX_E2E_MODEL}
+      AGENTBOX_E2E_OPENAI_BASE_URL: http://ollama:11434/v1
+      AGENTBOX_E2E_LMSTUDIO_BASE_URL: http://127.0.0.1:1234/v1
+      AGENTBOX_E2E_LMSTUDIO_MODEL: ${AGENTBOX_E2E_LMSTUDIO_MODEL}
+
+volumes:
+  ollama-models:
+  lmstudio-models:
