@@ -64,10 +64,10 @@ What the picture says:
 ## Install
 
 ```bash
-pipx install agentbox-cli
+pipx install agentboxer
 ```
 
-The distribution is named `agentbox-cli` because `agentbox` is taken on PyPI; the command it installs is `agentbox`.
+The distribution is named `agentboxer` because `agentbox` is taken on PyPI and `agentbox-cli` collides with an existing project once PyPI strips the separators; the command it installs is `agentbox`.
 
 Independent of PyPI, from a checkout:
 

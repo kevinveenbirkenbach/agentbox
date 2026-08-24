@@ -16,7 +16,7 @@ install:
 
 .PHONY: uninstall
 uninstall:
-	pipx uninstall agentbox-cli
+	pipx uninstall agentboxer
 
 .PHONY: test
 test: test-unit test-e2e
