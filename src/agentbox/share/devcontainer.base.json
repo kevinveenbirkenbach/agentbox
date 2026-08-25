@@ -8,11 +8,12 @@
     },
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/node:1": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/sshd:1": {}
   },
   "remoteUser": "dev",
-  "appPort": ["127.0.0.1::2222"],
+  "appPort": [
+    "127.0.0.1::2222"
+  ],
   "containerEnv": {
     "AGENTBOX_AGENTS": "@anthropic-ai/claude-code"
   },

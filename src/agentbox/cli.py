@@ -152,6 +152,76 @@ def ensure_ssh_include(state: Path, home: Path) -> str:
         return "failed"
 
 
+def sysbox_available() -> bool:
+    result = subprocess.run(
+        ["docker", "info", "--format", "{{json .Runtimes}}"], capture_output=True, text=True
+    )
+    return cfg.SYSBOX_RUNTIME in result.stdout
+
+
+def harden_nested_docker(source: Path, config: dict) -> Path | None:
+    features = cfg.privilege_features(config)
+    if features:
+        print(f"⚠ {', '.join(features)} forces --privileged on this box:", file=sys.stderr)
+        print("  every capability, no AppArmor, the host's block devices in /dev.", file=sys.stderr)
+        print("  Escaping is a mount command, not an exploit.", file=sys.stderr)
+        if sysbox_available():
+            print(f"  {cfg.SYSBOX_RUNTIME} is installed but cannot be combined with it — drop the", file=sys.stderr)
+            print("  feature and install docker inside the image instead; sysbox provides the", file=sys.stderr)
+            print("  nested daemon without privileges.", file=sys.stderr)
+        else:
+            print("  Install sysbox, drop the feature, and install docker inside the image:", file=sys.stderr)
+            print("    yay -S sysbox-ce-bin", file=sys.stderr)
+        return None
+
+    if not sysbox_available():
+        return None
+
+    hardened = cfg.write_hardened(source, cfg.harden(config))
+    print(f"→ running under {cfg.SYSBOX_RUNTIME}: container root is an unprivileged host user")
+    return hardened
+
+
+def trusted_file(state: Path, alias: str) -> Path:
+    return state / "trusted" / alias
+
+
+def is_trusted(state: Path, alias: str, digest: str) -> bool:
+    record = trusted_file(state, alias)
+    try:
+        return record.read_text(encoding="utf-8").strip() == digest
+    except OSError:
+        return False
+
+
+def record_trust(state: Path, alias: str, digest: str) -> None:
+    record = trusted_file(state, alias)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(f"{digest}\n", encoding="utf-8")
+
+
+def guard_project_config(workspace: Path, state: Path, alias: str, trust_now: bool) -> int:
+    layers = cfg.project_layers(workspace)
+    risky = cfg.risky_settings(layers)
+    if not risky:
+        return 0
+
+    digest = cfg.config_digest(layers)
+    if trust_now:
+        record_trust(state, alias, digest)
+        print(f"→ trusted this project's {', '.join(risky)}")
+        return 0
+    if is_trusted(state, alias, digest):
+        return 0
+
+    print(f"✖ {cfg.PROJECT_CONFIG} sets {', '.join(risky)}", file=sys.stderr)
+    print("  These decide what the container may reach on this host, and an agent with", file=sys.stderr)
+    print("  write access to the repository can change them. Read the diff, then allow", file=sys.stderr)
+    print("  this exact configuration:", file=sys.stderr)
+    print("    agentbox up --trust-config", file=sys.stderr)
+    return 6
+
+
 def up_command(workspace: Path, override: Path | None, rebuild: bool) -> list[str]:
     command = [*DEVCONTAINER_CLI, "up", "--workspace-folder", str(workspace)]
     if override is not None:
@@ -171,10 +241,17 @@ def cmd_up(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
     state = state_dir()
     alias = claim_alias(workspace, state)
+
+    blocked = guard_project_config(workspace, state, alias, args.trust_config)
+    if blocked:
+        return blocked
+
     key_file = ensure_key(state, alias)
 
     override = cfg.resolve_config(workspace, state / "run", cfg.SHARE_DIR, alias)
-    subprocess.run(up_command(workspace, override, args.rebuild), check=True)
+    source = override if override is not None else workspace / cfg.PROJECT_CONFIG
+    hardened = harden_nested_docker(source, json.loads(source.read_text(encoding="utf-8")))
+    subprocess.run(up_command(workspace, hardened or override, args.rebuild), check=True)
 
     cid = container_id(workspace)
     if cid is None:
@@ -403,6 +480,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     up = subparsers.add_parser("up", help="build and start the sandbox")
     up.add_argument("--rebuild", action="store_true", help="recreate an existing container")
+    up.add_argument(
+        "--trust-config",
+        action="store_true",
+        help="allow this project's container settings after reading them",
+    )
     up.set_defaults(func=cmd_up)
 
     run = subparsers.add_parser("run", help="run a command inside the sandbox")

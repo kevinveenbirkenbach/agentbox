@@ -69,19 +69,23 @@ pipx install agentboxer
 
 The distribution is named `agentboxer` because `agentbox` is taken on PyPI and `agentbox-cli` collides with an existing project once PyPI strips the separators; the command it installs is `agentbox`.
 
-Independent of PyPI, from a checkout:
+Independent of PyPI, from a checkout — this also installs what the host needs:
 
 ```bash
-make install
+make install        # host dependencies plus agentbox
+make host-deps      # host dependencies only
 ```
 
-The package itself has no Python dependencies, but it drives three host binaries and refuses to start without them:
+The package itself has no Python dependencies, but it drives host binaries and refuses to start without them:
 
 | Binary | Used for |
 |---|---|
 | `docker` | building and running the sandbox |
 | `npx` (Node.js) | fetching the [devcontainer CLI](https://github.com/devcontainers/cli) |
 | `ssh-keygen` | the per-project key |
+| `sysbox-runc` | nested Docker without `--privileged`, see below |
+
+On Arch-based hosts `make host-deps` does the whole setup: it installs `docker`, `nodejs`, `npm` and `openssh` with pacman and `sysbox-ce-bin` with yay, enables both services, registers the sysbox runtime in `/etc/docker/daemon.json`, and restarts the Docker daemon so it picks the runtime up — which stops running containers, so it says so before doing it. Every step is skipped when it is already done, so re-running costs nothing. On other distributions it prints the list and leaves the machine alone.
 
 ## Quickstart
 
@@ -186,11 +190,42 @@ The proprietary VS Code build works too — Microsoft publishes matching servers
 
 The feature source lives in `features/agentbox/`; publish it with `devcontainer features publish`.
 
+## What the sandbox protects against
+
+A misbehaving agent, reliably. A hostile one, only in part — the difference matters, so here is the honest split.
+
+**Held:** the agent reaches the project directory and nothing else of the host. No host home, no sibling repositories, no host Docker socket, no SSH keys, no cloud credentials. `rm -rf` in there costs you the repository, not the machine.
+
+**Not held, and unfixable by construction:** the agent writes files that *you* later execute on the host — `.git/hooks/*` on your next commit, the `Makefile` on your next `make`, `.vscode/tasks.json` when you open the folder locally. Read diffs before running anything, and remember that `.git/hooks` never shows up in one.
+
+**Guarded, because agentbox opened it itself:** a devcontainer configuration decides what the next container may reach, and it lives in the repository the agent can write. `initializeCommand` even runs on the *host*. The project configuration is therefore checked against a **whitelist** of settings that cannot widen the box — image, features, ports, environment, editor customizations, the in-container lifecycle commands. Everything else stops `agentbox up` until you have read it: `runArgs`, `mounts`, `initializeCommand`, `workspaceMount`, `dockerComposeFile`, `build`, and any key the spec grows in future. Nested-Docker features are flagged by name, because they are what forces `--privileged`.
+
+```
+✖ .devcontainer/devcontainer.json sets runArgs
+  These decide what the container may reach on this host …
+    agentbox up --trust-config
+```
+
+The approval records a hash of those layers in `~/.config/agentbox/trusted/<alias>`, outside the repository. Change the configuration and the approval lapses; an agent cannot re-grant it.
+
+**Nested Docker costs the isolation, unless sysbox is installed.** The `docker-in-docker` feature requires `--privileged`, which hands the container every capability, disables AppArmor and exposes the host's block devices — escaping is then a `mount` command, no exploit needed. It is therefore not part of the default configuration; a project that needs Docker inside the box declares it:
+
+```json
+"features": { "ghcr.io/devcontainers/features/docker-in-docker:2": {} }
+```
+
+When [sysbox](https://github.com/nestybox/sysbox) is available as a Docker runtime, `agentbox up` puts the box on it automatically, which gives nested Docker **without** privileges and a user namespace of its own. Without sysbox it says so and proceeds privileged — the choice is yours, but it is not silent:
+
+```bash
+yay -S sysbox-ce-bin      # Arch, AUR
+```
+
 ## Limitations
 
+- Even unprivileged, a container shares the host kernel. It is a strong boundary against mistakes and a moderate one against intent — not a substitute for a virtual machine when running genuinely hostile code.
+- Network access is not restricted, so anything readable inside the box can leave it — including the agent credentials stored there.
 - The project directory is bind-mounted, so build artifacts inside it (`.venv/`, `node_modules/`) are shared with the host and can collide between host and container toolchains. Mount them as volumes in layer 3 if that bites.
 - Containers started *inside* the sandbox run in its nested Docker daemon; their published ports are not reachable from the host.
-- Network access is not restricted yet — the sandbox isolates the filesystem and the Docker daemon, not the internet.
 - The agent CLIs themselves are proprietary; only the sandbox around them is open source.
 
 ## Other agents

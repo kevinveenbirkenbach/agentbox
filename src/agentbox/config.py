@@ -130,3 +130,76 @@ def ssh_config_block(alias: str, port: int, key_file: Path, user: str) -> str:
 def declared_extensions(config: dict) -> list[str]:
     vscode = config.get("customizations", {}).get("vscode", {})
     return list(vscode.get("extensions", []))
+
+
+SAFE_KEYS = frozenset(
+    {
+        "name",
+        "image",
+        "features",
+        "overrideFeatureInstallOrder",
+        "forwardPorts",
+        "portsAttributes",
+        "otherPortsAttributes",
+        "containerEnv",
+        "remoteEnv",
+        "customizations",
+        "settings",
+        "postCreateCommand",
+        "postStartCommand",
+        "postAttachCommand",
+        "updateContentCommand",
+        "waitFor",
+        "shutdownAction",
+        "workspaceFolder",
+        "userEnvProbe",
+        "hostRequirements",
+    }
+)
+PRIVILEGE_FEATURES = ("docker-in-docker", "docker-outside-of-docker")
+HARDENED_CONFIG = ".agentbox.json"
+SYSBOX_RUNTIME = "sysbox-runc"
+
+
+def project_layers(workspace: Path) -> dict:
+    workspace = workspace.resolve()
+    merged: dict = {}
+    for relative in (PROJECT_CONFIG, LOCAL_OVERRIDE):
+        candidate = workspace / relative
+        if candidate.exists():
+            merged = deep_merge(merged, _read_json(candidate))
+    return merged
+
+
+def risky_settings(config: dict) -> list[str]:
+    found = [key for key in sorted(config) if key not in SAFE_KEYS]
+    found += [f"features:{name}" for name in sorted(privilege_features(config))]
+    return found
+
+
+def privilege_features(config: dict) -> list[str]:
+    return [
+        name
+        for name in config.get("features", {})
+        if any(marker in name for marker in PRIVILEGE_FEATURES)
+    ]
+
+
+def harden(config: dict) -> dict:
+    hardened = dict(config)
+    run_args = list(hardened.get("runArgs", []))
+    if f"--runtime={SYSBOX_RUNTIME}" not in run_args:
+        run_args.append(f"--runtime={SYSBOX_RUNTIME}")
+    hardened["runArgs"] = run_args
+    return hardened
+
+
+def write_hardened(source: Path, config: dict) -> Path:
+    target = source.parent / HARDENED_CONFIG
+    target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
+def config_digest(config: dict) -> str:
+    payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

