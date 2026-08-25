@@ -12,7 +12,8 @@ help:
 
 .PHONY: install
 install:
-	pipx install --force .
+	-pipx uninstall agentboxer
+	pipx install .
 
 .PHONY: uninstall
 uninstall:
