@@ -125,3 +125,8 @@ def ssh_config_block(alias: str, port: int, key_file: Path, user: str) -> str:
             "",
         ]
     )
+
+
+def declared_extensions(config: dict) -> list[str]:
+    vscode = config.get("customizations", {}).get("vscode", {})
+    return list(vscode.get("extensions", []))

@@ -13,7 +13,11 @@ from . import config as cfg
 DEVCONTAINER_CLI = ["npx", "--yes", "@devcontainers/cli"]
 CONTAINER_USER = "dev"
 CONTAINER_SSH_PORT = 2222
-EDITORS = ("code-oss", "codium", "code")
+EDITORS = ("codium", "code", "code-oss")
+RESOLVERS = ("jeanp413.open-remote-ssh", "ms-vscode-remote.remote-ssh")
+EDITORS_WITHOUT_REMOTE_SERVER = ("code-oss",)
+VSCODIUM_PACKAGE = "vscodium-bin"
+SETTINGS_DIRS = (("VSCodium", "Code - OSS"),)
 GITIGNORE_ENTRY = cfg.MERGED_IN_PROJECT
 UP_BINARIES = ("docker", "npx", "ssh-keygen")
 EXEC_BINARIES = ("docker", "npx")
@@ -124,18 +128,28 @@ def alias_for(workspace: Path, state: Path) -> str:
     return cfg.alias_for(workspace, alias_dir(state))
 
 
-def write_ssh_config(state: Path, alias: str, port: int, key_file: Path) -> bool:
+def write_ssh_config(state: Path, alias: str, port: int, key_file: Path) -> None:
     target = ssh_dir(state) / f"{alias}.conf"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         cfg.ssh_config_block(alias, port, key_file, CONTAINER_USER),
         encoding="utf-8",
     )
-    user_config = Path.home() / ".ssh" / "config"
+
+
+def ensure_ssh_include(state: Path, home: Path) -> str:
+    line = include_line(state)
+    user_config = home / ".ssh" / "config"
     try:
-        return include_line(state) in user_config.read_text(encoding="utf-8")
+        existing = user_config.read_text(encoding="utf-8") if user_config.exists() else ""
+        if line in existing.splitlines():
+            return "present"
+        user_config.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        user_config.write_text(f"{line}\n\n{existing}", encoding="utf-8")
+        user_config.chmod(0o600)
+        return "added"
     except OSError:
-        return False
+        return "failed"
 
 
 def up_command(workspace: Path, override: Path | None, rebuild: bool) -> list[str]:
@@ -169,15 +183,19 @@ def cmd_up(args: argparse.Namespace) -> int:
 
     inject_key(workspace, override, key_file)
     port = ssh_port(cid)
-    included = write_ssh_config(state, alias, port, key_file)
+    write_ssh_config(state, alias, port, key_file)
+    include = ensure_ssh_include(state, Path.home())
 
     print(f"\nagentbox '{alias}' is up on 127.0.0.1:{port}\n")
     print("  agentbox run claude       agent inside the container")
     print("  agentbox shell            shell inside the container")
     print("  agentbox code             open the editor on the container\n")
-    if not included:
-        print(f"Add this line once to ~/.ssh/config, then 'ssh {alias}' works:")
+    if include == "added":
+        print(f"Added to ~/.ssh/config so 'ssh {alias}' works:")
         print(f"  {include_line(state)}\n")
+    if include == "failed":
+        print(f"✖ could not update ~/.ssh/config — add this line yourself, at the top:", file=sys.stderr)
+        print(f"  {include_line(state)}\n", file=sys.stderr)
     return 0
 
 
@@ -198,13 +216,137 @@ def cmd_shell(args: argparse.Namespace) -> int:
     return cmd_run(args)
 
 
+def find_editor() -> str | None:
+    for name in EDITORS:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def installed_resolver(editor: str) -> str | None:
+    result = subprocess.run([editor, "--list-extensions"], capture_output=True, text=True)
+    for resolver in RESOLVERS:
+        if resolver in result.stdout:
+            return resolver
+    return None
+
+
+def ensure_resolver(editor: str) -> int:
+    if installed_resolver(editor) is not None:
+        return 0
+    for resolver in RESOLVERS:
+        print(f"→ installing {resolver} into {editor}")
+        if subprocess.run([editor, "--install-extension", resolver]).returncode == 0:
+            print(f"→ quit every running {Path(editor).name} window before connecting: a resolver")
+            print("  installed after startup is not picked up by a running instance")
+            return 0
+    print(f"✖ {editor} cannot resolve ssh-remote — no marketplace served either resolver", file=sys.stderr)
+    for resolver in RESOLVERS:
+        print(f"  tried: {editor} --install-extension {resolver}", file=sys.stderr)
+    return 4
+
+
+def editor_name(editor: str) -> str:
+    return Path(editor).resolve().name
+
+
+def require_capable_editor(editor: str) -> int:
+    if editor_name(editor) not in EDITORS_WITHOUT_REMOTE_SERVER:
+        return 0
+    print(f"✖ {editor_name(editor)} cannot open a remote window: it publishes no remote", file=sys.stderr)
+    print("  server build of its own, and the client installs the server under its own", file=sys.stderr)
+    print("  commit hash, which no other build matches.", file=sys.stderr)
+    print(f"  Install VSCodium first, then run this again — agentbox prefers it:", file=sys.stderr)
+    print(f"    yay -S {VSCODIUM_PACKAGE}", file=sys.stderr)
+    return 5
+
+
+def link_editor_settings(home: Path) -> str:
+    for first, second in SETTINGS_DIRS:
+        primary = home / ".config" / first / "User"
+        secondary = home / ".config" / second / "User"
+        if primary.is_symlink() or secondary.is_symlink():
+            return "present"
+        if primary.exists() and secondary.exists():
+            return "conflict"
+        if secondary.exists():
+            source, link = secondary, primary
+        elif primary.exists():
+            source, link = primary, secondary
+        else:
+            return "nothing"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(source)
+    return "linked"
+
+
+def host_extensions(editor: str) -> list[str]:
+    result = subprocess.run([editor, "--list-extensions"], capture_output=True, text=True)
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def remote_extensions(editor: str, alias: str) -> list[str]:
+    result = subprocess.run(
+        [editor, "--remote", f"ssh-remote+{alias}", "--list-extensions"],
+        capture_output=True,
+        text=True,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def missing_extensions(wanted: list[str], installed: list[str]) -> list[str]:
+    present = {name.lower() for name in installed}
+    return [name for name in wanted if name.lower() not in present]
+
+
+def install_arguments(editor: str, alias: str, missing: list[str]) -> list[str]:
+    command = [editor, "--remote", f"ssh-remote+{alias}"]
+    for name in missing:
+        command += ["--install-extension", name]
+    return command
+
+
+def sync_extensions(editor: str, alias: str, wanted: list[str]) -> int:
+    if not wanted:
+        return 0
+    missing = missing_extensions(wanted, remote_extensions(editor, alias))
+    if not missing:
+        return 0
+    print(f"→ installing {len(missing)} extensions into the box: {', '.join(missing)}")
+    subprocess.run(install_arguments(editor, alias, missing))
+    return len(missing)
+
+
 def cmd_code(args: argparse.Namespace) -> int:
-    workspace = args.workspace.resolve()
-    alias = alias_for(workspace, state_dir())
-    editor = next((shutil.which(name) for name in EDITORS if shutil.which(name)), None)
+    editor = find_editor()
     if editor is None:
         print(f"✖ no editor found, looked for: {', '.join(EDITORS)}", file=sys.stderr)
+        print(f"  install VSCodium: yay -S {VSCODIUM_PACKAGE}", file=sys.stderr)
         return 1
+
+    blocked = require_capable_editor(editor)
+    if blocked:
+        return blocked
+
+    linked = link_editor_settings(Path.home())
+    if linked == "linked":
+        print("→ linked the VSCodium and Code - OSS settings directories, configure either one")
+    if linked == "conflict":
+        print("⚠ VSCodium and Code - OSS both carry their own settings — not linking them", file=sys.stderr)
+    blocked = ensure_resolver(editor)
+    if blocked:
+        return blocked
+
+    workspace = args.workspace.resolve()
+    state = state_dir()
+    alias = alias_for(workspace, state)
+
+    override = cfg.resolve_config(workspace, state / "run", cfg.SHARE_DIR, alias)
+    source = override if override is not None else workspace / cfg.PROJECT_CONFIG
+    declared = cfg.declared_extensions(json.loads(source.read_text(encoding="utf-8")))
+    sync_extensions(editor, alias, declared or host_extensions(editor))
+
     command = [editor, "--remote", f"ssh-remote+{alias}", cfg.workspace_target(workspace)]
     return subprocess.run(command).returncode
 

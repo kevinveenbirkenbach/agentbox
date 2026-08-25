@@ -148,16 +148,33 @@ Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start.
 
 The agent extension must run inside the container, otherwise it cannot reach the agent CLI. That happens automatically once the editor window itself is remote.
 
-1. Install `jeanp413.open-remote-ssh` from Open VSX (the proprietary Dev Containers extension is not needed and is unavailable on Open VSX).
-2. Add this line once to `~/.ssh/config`:
+1. `agentbox code` picks an editor — `codium`, then `code`, then `code-oss` — and makes sure it carries a resolver extension. Which one depends on the marketplace the editor speaks, and the binary name does not reveal that: on Arch, `/usr/bin/code` is a symlink to Code - OSS, which serves Open VSX. So agentbox simply tries both, `jeanp413.open-remote-ssh` and `ms-vscode-remote.remote-ssh`, and keeps the one the marketplace actually has. The Dev Containers extension is not needed and is unavailable on Open VSX.
+
+   Finding only Code - OSS, or no editor at all, it stops and asks for VSCodium to be installed (`yay -S vscodium-bin`) rather than opening a window that cannot connect. It does not install packages itself: that needs root, and a password prompt in the middle of a run is worse than a clear message.
+
+   It also links the VSCodium and Code - OSS user settings directories, so both editors read the same `settings.json` and only one has to be configured. Two directories that both already carry settings are left untouched, with a warning: merging them is the operator's call, not the tool's.
+2. `agentbox up` puts its own include at the top of `~/.ssh/config`, creating the file with owner-only permissions if it does not exist:
 
    ```
    Include ~/.config/agentbox/ssh.d/*.conf
    ```
 
-3. `agentbox code`, or connect manually to the host entry named after the project and open `/workspaces/<project>`.
+   The line goes first because OpenSSH keeps the first value it obtains for an option — below an existing `Host *` block, that block would win over the alias.
+
+3. `agentbox code` opens the window and installs the extensions the box is missing. A remote window carries its own extension set, so anything installed on the host is inert in there. Which ones it installs:
+
+   - `customizations.vscode.extensions` from the effective devcontainer config, if the project declares it — versioned in the repository, the same field every devcontainer client reads.
+   - otherwise everything installed on the host, mirrored into the box.
+
+   Already-installed extensions are skipped, and the rest go in one call rather than one editor launch each.
+
+4. Trust the folder when the editor asks. Until then it runs in Restricted Mode and keeps every extension inert, which looks exactly like a failed install.
 
 Ports change on every rebuild; `agentbox up` rewrites the host entry each time, so the alias stays valid.
+
+**Use VSCodium, not Code - OSS.** Code - OSS publishes no remote server build of its own, and the client installs the server under its own commit hash — a VSCodium server carries a different one, so the connection dies while installing it. Pointing `remote.SSH.serverDownloadUrlTemplate` at a VSCodium release does not help: Code - OSS supplies no `release` value, which yields a malformed URL, and no VSCodium build matches the commit anyway. VSCodium ships client and server from the same source, so the pair matches by construction; `agentbox code` therefore prefers `codium` and warns when only `code-oss` is available.
+
+The proprietary VS Code build works too — Microsoft publishes matching servers — at the cost of not being open source.
 
 ## Projects that already have a devcontainer.json
 

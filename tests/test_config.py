@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -204,6 +205,166 @@ class TestBinaryPrecheck(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(cli.require_binaries(("docker",)), 3)
         self.assertIn("docker", err.getvalue())
+
+
+class TestSshInclude(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.state = self.home / ".config" / "agentbox"
+        self.config = self.home / ".ssh" / "config"
+
+    def test_line_is_prepended_when_missing(self) -> None:
+        self.config.parent.mkdir(parents=True)
+        self.config.write_text("Host example\n  User someone\n", encoding="utf-8")
+        self.assertEqual(cli.ensure_ssh_include(self.state, self.home), "added")
+        lines = self.config.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[0], cli.include_line(self.state))
+        self.assertIn("Host example", lines)
+
+    def test_missing_config_is_created_with_owner_only_permissions(self) -> None:
+        self.assertEqual(cli.ensure_ssh_include(self.state, self.home), "added")
+        self.assertEqual(self.config.read_text(encoding="utf-8").splitlines()[0], cli.include_line(self.state))
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+
+    def test_existing_line_is_left_alone(self) -> None:
+        self.config.parent.mkdir(parents=True)
+        self.config.write_text(f"{cli.include_line(self.state)}\n\nHost example\n", encoding="utf-8")
+        before = self.config.read_text(encoding="utf-8")
+        self.assertEqual(cli.ensure_ssh_include(self.state, self.home), "present")
+        self.assertEqual(self.config.read_text(encoding="utf-8"), before)
+
+    def test_unwritable_config_reports_failure(self) -> None:
+        with mock.patch.object(cli.Path, "write_text", side_effect=OSError("read-only")):
+            self.assertEqual(cli.ensure_ssh_include(self.state, self.home), "failed")
+
+
+class TestEditorResolver(unittest.TestCase):
+    def test_vscodium_wins_over_the_others(self) -> None:
+        with mock.patch.object(cli.shutil, "which", side_effect=["/usr/bin/codium"]):
+            self.assertEqual(cli.find_editor(), "/usr/bin/codium")
+
+    def test_code_oss_is_the_last_resort(self) -> None:
+        with mock.patch.object(cli.shutil, "which", side_effect=[None, None, "/usr/bin/code-oss"]):
+            self.assertEqual(cli.find_editor(), "/usr/bin/code-oss")
+
+    def test_no_editor_found(self) -> None:
+        with mock.patch.object(cli.shutil, "which", return_value=None):
+            self.assertIsNone(cli.find_editor())
+
+    def test_symlinked_code_is_recognised_as_code_oss(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "code-oss").write_text("", encoding="utf-8")
+            (root / "code").symlink_to(root / "code-oss")
+            self.assertEqual(cli.editor_name(str(root / "code")), "code-oss")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(cli.require_capable_editor(str(root / "code")), 5)
+            self.assertIn(f"yay -S {cli.VSCODIUM_PACKAGE}", err.getvalue())
+
+    def test_vscodium_is_accepted(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.require_capable_editor("/usr/bin/codium"), 0)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_either_installed_resolver_counts(self) -> None:
+        listed = subprocess.CompletedProcess([], 0, stdout="ms-vscode-remote.remote-ssh\n", stderr="")
+        with mock.patch.object(cli.subprocess, "run", return_value=listed) as run:
+            self.assertEqual(cli.ensure_resolver("/usr/bin/code"), 0)
+        self.assertEqual(run.call_count, 1)
+
+    def test_second_marketplace_is_tried_when_the_first_has_none(self) -> None:
+        listed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        missing = subprocess.CompletedProcess([], 1)
+        installed = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(cli.subprocess, "run", side_effect=[listed, missing, installed]) as run:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.ensure_resolver("/usr/bin/code"), 0)
+        self.assertIn(cli.RESOLVERS[1], run.call_args.args[0])
+
+    def test_no_marketplace_serves_a_resolver(self) -> None:
+        listed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        missing = subprocess.CompletedProcess([], 1)
+        with mock.patch.object(cli.subprocess, "run", side_effect=[listed, missing, missing]):
+            with contextlib.redirect_stdout(io.StringIO()):
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(cli.ensure_resolver("/usr/bin/code"), 4)
+        for resolver in cli.RESOLVERS:
+            self.assertIn(resolver, err.getvalue())
+
+
+class TestExtensionSync(unittest.TestCase):
+    def test_declared_extensions_are_read_from_the_config(self) -> None:
+        config = {"customizations": {"vscode": {"extensions": ["redhat.ansible", "ms-python.python"]}}}
+        self.assertEqual(cfg.declared_extensions(config), ["redhat.ansible", "ms-python.python"])
+
+    def test_config_without_customizations_declares_nothing(self) -> None:
+        self.assertEqual(cfg.declared_extensions({"image": "debian"}), [])
+
+    def test_already_installed_extensions_are_skipped(self) -> None:
+        wanted = ["redhat.ansible", "ms-python.python"]
+        installed = ["RedHat.Ansible"]
+        missing = cli.missing_extensions(wanted, installed)
+        self.assertEqual(missing, ["ms-python.python"])
+        self.assertEqual(len(missing), 1)
+
+    def test_install_arguments_repeat_the_flag(self) -> None:
+        command = cli.install_arguments("/usr/bin/codium", "demo", ["a.b", "c.d"])
+        self.assertEqual(command[:3], ["/usr/bin/codium", "--remote", "ssh-remote+demo"])
+        self.assertEqual(command.count("--install-extension"), 2)
+
+    def test_nothing_wanted_means_no_subprocess(self) -> None:
+        with mock.patch.object(cli.subprocess, "run") as run:
+            self.assertEqual(cli.sync_extensions("/usr/bin/codium", "demo", []), 0)
+        run.assert_not_called()
+
+    def test_only_the_missing_ones_are_installed(self) -> None:
+        listed = subprocess.CompletedProcess([], 0, stdout="redhat.ansible\n", stderr="")
+        installed = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(cli.subprocess, "run", side_effect=[listed, installed]) as run:
+            with contextlib.redirect_stdout(io.StringIO()):
+                count = cli.sync_extensions("/usr/bin/codium", "demo", ["redhat.ansible", "ms-python.python"])
+        self.assertEqual(count, 1)
+        self.assertIn("ms-python.python", run.call_args.args[0])
+        self.assertNotIn("redhat.ansible", run.call_args.args[0])
+
+
+class TestEditorSettingsLink(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.vscodium = self.home / ".config" / "VSCodium" / "User"
+        self.oss = self.home / ".config" / "Code - OSS" / "User"
+
+    def test_existing_code_oss_settings_become_the_source(self) -> None:
+        self.oss.mkdir(parents=True)
+        (self.oss / "settings.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(cli.link_editor_settings(self.home), "linked")
+        self.assertTrue(self.vscodium.is_symlink())
+        self.assertTrue((self.vscodium / "settings.json").exists())
+
+    def test_existing_vscodium_settings_become_the_source(self) -> None:
+        self.vscodium.mkdir(parents=True)
+        self.assertEqual(cli.link_editor_settings(self.home), "linked")
+        self.assertTrue(self.oss.is_symlink())
+
+    def test_two_real_directories_are_left_alone(self) -> None:
+        self.vscodium.mkdir(parents=True)
+        self.oss.mkdir(parents=True)
+        self.assertEqual(cli.link_editor_settings(self.home), "conflict")
+        self.assertFalse(self.vscodium.is_symlink())
+        self.assertFalse(self.oss.is_symlink())
+
+    def test_nothing_to_link(self) -> None:
+        self.assertEqual(cli.link_editor_settings(self.home), "nothing")
+
+    def test_existing_link_is_kept(self) -> None:
+        self.oss.mkdir(parents=True)
+        self.vscodium.parent.mkdir(parents=True)
+        self.vscodium.symlink_to(self.oss)
+        self.assertEqual(cli.link_editor_settings(self.home), "present")
 
 
 class TestParser(unittest.TestCase):
