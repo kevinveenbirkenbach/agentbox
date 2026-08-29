@@ -148,6 +148,30 @@ Example — this project needs Codex instead of Claude and a Python toolchain, b
 
 Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start.
 
+## Reading a neighbouring repository
+
+A window serves exactly one box, so folders from two boxes cannot share one window (see [Editor](#editor)). What works is the other direction: mount the neighbour into the box, read-only.
+
+```json
+{
+  "mounts": [
+    "source=${localWorkspaceFolder}/../other-repo,target=/workspaces/other-repo,type=bind,readonly"
+  ]
+}
+```
+
+That goes into `.devcontainer/agentbox.local.json`. `${localWorkspaceFolder}` is the devcontainer CLI's own variable, so the entry carries no machine-specific path and survives being committed. agentbox appends its own mounts — the home volume and the `/agentbox` share — after the merge, so an override that sets `mounts` no longer drops them.
+
+A workspace file next to it reaches both, on the host and in the box, because the mount target mirrors the layout the repositories already have on the host:
+
+```json
+{ "folders": [{ "path": "." }, { "path": "../other-repo" }] }
+```
+
+The first `agentbox up` after this asks for `--trust-config`: a bind mount decides what the box can reach on this host, and an agent with write access to the repository could add one.
+
+Read-only is the point. The agent in this box reads the neighbour to understand it and cannot change it; the neighbour's own box stays the only place where its code is written.
+
 ## Editor
 
 The agent extension must run inside the container, otherwise it cannot reach the agent CLI. That happens automatically once the editor window itself is remote.
@@ -192,6 +216,16 @@ The agent extension must run inside the container, otherwise it cannot reach the
    Both start identical. Their single folder entry is the relative path `.`, which resolves against the directory of the workspace file and is therefore valid both on the host and in the box, where the repository lives under `/workspaces/<project>`. One file, no `vscode-remote://` URIs, no host and box variant to keep in sync.
 
 5. Trust the folder when the editor asks. Until then it runs in Restricted Mode and keeps every extension inert, which looks exactly like a failed install.
+
+6. One window serves one box. A `.code-workspace` whose folders point at two different aliases does not load half of it — the foreign authority is discarded and the path is looked up inside the connected container instead:
+
+   ```
+   Ignoring the error while validating workspace folder
+   vscode-remote://ssh-remote%2Bother/workspaces/other
+   - Error: ENOENT: no such file or directory, stat '/workspaces/other'
+   ```
+
+   Opened on the host rather than through `agentbox code`, such a file reaches neither box: `No window found with remote authority: ssh-remote+…`. To work across repositories, either put them in one box — run agentbox on the directory above them and let a workspace file pick the subset — or mount the neighbour read-only, see [Reading a neighbouring repository](#reading-a-neighbouring-repository).
 
 Ports change on every rebuild; `agentbox up` rewrites the host entry each time, so the alias stays valid.
 

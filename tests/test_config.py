@@ -527,6 +527,29 @@ class TestEditorSettingsLink(unittest.TestCase):
         self.assertEqual(cli.link_editor_settings(self.home), "present")
 
 
+class TestApplyOverride(unittest.TestCase):
+    def test_own_mounts_survive_a_mounts_override(self) -> None:
+        base = {"mounts": ["source=agentbox-home-a,target=/home/dev,type=volume"]}
+        override = {"mounts": ["source=/host/repoB,target=/workspaces/repoB,type=bind,readonly"]}
+        self.assertEqual(
+            cfg.apply_override(base, override)["mounts"],
+            [
+                "source=agentbox-home-a,target=/home/dev,type=volume",
+                "source=/host/repoB,target=/workspaces/repoB,type=bind,readonly",
+            ],
+        )
+
+    def test_a_repeated_mount_is_not_duplicated(self) -> None:
+        mount = "source=agentbox-home-a,target=/home/dev,type=volume"
+        self.assertEqual(cfg.apply_override({"mounts": [mount]}, {"mounts": [mount]})["mounts"], [mount])
+
+    def test_other_keys_still_deep_merge(self) -> None:
+        base = {"features": {"node": {}}, "name": "a"}
+        override = {"features": {"python": {}}, "name": "b"}
+        merged = cfg.apply_override(base, override)
+        self.assertEqual(merged, {"features": {"node": {}, "python": {}}, "name": "b"})
+
+
 class TestWorkspaceFile(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()

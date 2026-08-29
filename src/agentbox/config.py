@@ -74,6 +74,15 @@ def deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
+def apply_override(config: dict, override: dict) -> dict:
+    own = list(config.get("mounts", []))
+    merged = deep_merge(config, override)
+    mounts = own + [mount for mount in merged.get("mounts", []) if mount not in own]
+    if mounts:
+        merged["mounts"] = mounts
+    return merged
+
+
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -104,7 +113,7 @@ def resolve_config(workspace: Path, state_dir: Path, share_dir: Path, alias: str
 
     config = base_config(share_dir, alias)
     if override.exists():
-        config = deep_merge(config, _read_json(override))
+        config = apply_override(config, _read_json(override))
     target = state_dir / alias / "devcontainer.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
