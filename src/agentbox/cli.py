@@ -18,7 +18,11 @@ RESOLVERS = ("jeanp413.open-remote-ssh", "ms-vscode-remote.remote-ssh")
 EDITORS_WITHOUT_REMOTE_SERVER = ("code-oss",)
 VSCODIUM_PACKAGE = "vscodium-bin"
 SETTINGS_DIRS = (("VSCodium", "Code - OSS"),)
-GITIGNORE_ENTRY = cfg.MERGED_IN_PROJECT
+GITIGNORE_ENTRIES = (
+    cfg.MERGED_IN_PROJECT,
+    f"*{cfg.WORKSPACE_SUFFIX}",
+    f"!{cfg.DEFAULT_WORKSPACE}",
+)
 UP_BINARIES = ("docker", "npx", "ssh-keygen")
 EXEC_BINARIES = ("docker", "npx")
 
@@ -447,7 +451,20 @@ def cmd_code(args: argparse.Namespace) -> int:
     declared = cfg.declared_extensions(json.loads(source.read_text(encoding="utf-8")))
     sync_extensions(editor, alias, declared or host_extensions(editor))
 
-    command = [editor, "--remote", f"ssh-remote+{alias}", cfg.workspace_target(workspace)]
+    try:
+        target = cfg.resolve_workspace_file(workspace, args.name)
+    except LookupError as error:
+        print(f"✖ {error}", file=sys.stderr)
+        return 7
+
+    remote_path = cfg.workspace_target(workspace)
+    if target is None and cfg.workspace_files(workspace):
+        wanted = " or ".join(cfg.WORKSPACE_PREFERENCE)
+        print(f"⚠ several *{cfg.WORKSPACE_SUFFIX} files and no {wanted} — opening the folder", file=sys.stderr)
+    if target is not None:
+        remote_path = f"{remote_path}/{target.name}"
+
+    command = [editor, "--remote", f"ssh-remote+{alias}", remote_path]
     return subprocess.run(command).returncode
 
 
@@ -467,6 +484,9 @@ def cmd_down(args: argparse.Namespace) -> int:
 
 def cmd_init(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
+    for seeded in cfg.seed_workspace_files(workspace):
+        print(f"→ wrote {seeded}")
+
     target = workspace / cfg.PROJECT_CONFIG
     if target.exists() and not args.force:
         print(f"✖ {target} exists, use --force to overwrite", file=sys.stderr)
@@ -481,11 +501,18 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"→ wrote {target}")
 
     gitignore = workspace / ".gitignore"
-    if gitignore.exists() and GITIGNORE_ENTRY not in gitignore.read_text(encoding="utf-8"):
-        with gitignore.open("a", encoding="utf-8") as handle:
-            handle.write(f"{GITIGNORE_ENTRY}\n")
-        print(f"→ added {GITIGNORE_ENTRY} to .gitignore")
+    if gitignore.exists():
+        missing = missing_gitignore_entries(gitignore.read_text(encoding="utf-8"))
+        if missing:
+            with gitignore.open("a", encoding="utf-8") as handle:
+                handle.write("".join(f"{entry}\n" for entry in missing))
+            print(f"→ added {', '.join(missing)} to .gitignore")
     return 0
+
+
+def missing_gitignore_entries(existing: str) -> list[str]:
+    lines = {line.strip() for line in existing.splitlines()}
+    return [entry for entry in GITIGNORE_ENTRIES if entry not in lines]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -517,9 +544,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("shell", help="open a shell inside the sandbox").set_defaults(
         func=cmd_shell
     )
-    subparsers.add_parser("code", help="open the editor on the sandbox").set_defaults(
-        func=cmd_code
+    code = subparsers.add_parser("code", help="open the editor on the sandbox")
+    code.add_argument(
+        "name",
+        nargs="?",
+        help=f"workspace file to open, with or without {cfg.WORKSPACE_SUFFIX}",
     )
+    code.set_defaults(func=cmd_code)
     subparsers.add_parser("down", help="remove the sandbox container").set_defaults(
         func=cmd_down
     )

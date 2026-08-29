@@ -216,3 +216,44 @@ BOX_SETTINGS = {
 
 def box_settings_json() -> str:
     return json.dumps(BOX_SETTINGS, indent=2) + "\n"
+
+
+WORKSPACE_SUFFIX = ".code-workspace"
+DEFAULT_WORKSPACE = f"default{WORKSPACE_SUFFIX}"
+LOCAL_WORKSPACE = f"local{WORKSPACE_SUFFIX}"
+WORKSPACE_PREFERENCE = (LOCAL_WORKSPACE, DEFAULT_WORKSPACE)
+WORKSPACE_TEMPLATE = {"folders": [{"path": "."}], "settings": {}}
+
+
+def workspace_files(workspace: Path) -> list[Path]:
+    return sorted(workspace.glob(f"*{WORKSPACE_SUFFIX}"))
+
+
+def resolve_workspace_file(workspace: Path, name: str | None = None) -> Path | None:
+    found = workspace_files(workspace)
+    if name is not None:
+        if not name.endswith(WORKSPACE_SUFFIX):
+            name += WORKSPACE_SUFFIX
+        target = workspace / name
+        if target.is_file():
+            return target
+        listing = ", ".join(path.name for path in found) or "none"
+        raise LookupError(f"no {name} in {workspace} — found: {listing}")
+    for preferred in WORKSPACE_PREFERENCE:
+        target = workspace / preferred
+        if target.is_file():
+            return target
+    if len(found) == 1:
+        return found[0]
+    return None
+
+
+def seed_workspace_files(workspace: Path) -> list[Path]:
+    written = []
+    for name in WORKSPACE_PREFERENCE:
+        target = workspace / name
+        if target.exists():
+            continue
+        target.write_text(json.dumps(WORKSPACE_TEMPLATE, indent=2) + "\n", encoding="utf-8")
+        written.append(target)
+    return written

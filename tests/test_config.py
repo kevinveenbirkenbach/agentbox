@@ -527,11 +527,97 @@ class TestEditorSettingsLink(unittest.TestCase):
         self.assertEqual(cli.link_editor_settings(self.home), "present")
 
 
+class TestWorkspaceFile(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+
+    def write(self, name: str) -> Path:
+        target = self.workspace / name
+        target.write_text("{}", encoding="utf-8")
+        return target
+
+    def test_single_file_is_opened(self) -> None:
+        target = self.write("custom.code-workspace")
+        self.assertEqual(cfg.resolve_workspace_file(self.workspace), target)
+
+    def test_no_file_opens_the_folder(self) -> None:
+        self.assertIsNone(cfg.resolve_workspace_file(self.workspace))
+
+    def test_local_wins_over_default(self) -> None:
+        self.write(cfg.DEFAULT_WORKSPACE)
+        local = self.write(cfg.LOCAL_WORKSPACE)
+        self.assertEqual(cfg.resolve_workspace_file(self.workspace), local)
+
+    def test_default_is_the_fallback(self) -> None:
+        default = self.write(cfg.DEFAULT_WORKSPACE)
+        self.write("custom.code-workspace")
+        self.assertEqual(cfg.resolve_workspace_file(self.workspace), default)
+
+    def test_several_files_without_a_default_open_the_folder(self) -> None:
+        self.write("one.code-workspace")
+        self.write("two.code-workspace")
+        self.assertIsNone(cfg.resolve_workspace_file(self.workspace))
+
+    def test_named_file_without_the_suffix(self) -> None:
+        target = self.write("custom.code-workspace")
+        self.assertEqual(cfg.resolve_workspace_file(self.workspace, "custom"), target)
+        self.assertEqual(
+            cfg.resolve_workspace_file(self.workspace, "custom.code-workspace"), target
+        )
+
+    def test_missing_named_file_lists_what_is_there(self) -> None:
+        self.write("other.code-workspace")
+        with self.assertRaises(LookupError) as raised:
+            cfg.resolve_workspace_file(self.workspace, "custom")
+        self.assertIn("custom.code-workspace", str(raised.exception))
+        self.assertIn("other.code-workspace", str(raised.exception))
+
+    def test_seed_writes_local_and_default_with_a_relative_folder(self) -> None:
+        written = cfg.seed_workspace_files(self.workspace)
+        self.assertEqual(
+            written,
+            [self.workspace / cfg.LOCAL_WORKSPACE, self.workspace / cfg.DEFAULT_WORKSPACE],
+        )
+        for target in written:
+            self.assertEqual(
+                json.loads(target.read_text(encoding="utf-8")),
+                {"folders": [{"path": "."}], "settings": {}},
+            )
+
+    def test_seed_keeps_existing_files_and_completes_the_pair(self) -> None:
+        self.write(cfg.DEFAULT_WORKSPACE)
+        self.assertEqual(
+            cfg.seed_workspace_files(self.workspace), [self.workspace / cfg.LOCAL_WORKSPACE]
+        )
+        self.assertEqual(cfg.seed_workspace_files(self.workspace), [])
+
+
+class TestGitignoreEntries(unittest.TestCase):
+    def test_custom_workspace_files_are_ignored_the_default_is_not(self) -> None:
+        self.assertEqual(
+            cli.missing_gitignore_entries(""),
+            [cfg.MERGED_IN_PROJECT, "*.code-workspace", "!default.code-workspace"],
+        )
+
+    def test_present_entries_are_not_repeated(self) -> None:
+        existing = f"{cfg.MERGED_IN_PROJECT}\n*.code-workspace\n"
+        self.assertEqual(cli.missing_gitignore_entries(existing), ["!default.code-workspace"])
+
+    def test_a_substring_match_does_not_count_as_present(self) -> None:
+        self.assertIn("*.code-workspace", cli.missing_gitignore_entries("custom.code-workspace\n"))
+
+
 class TestParser(unittest.TestCase):
     def test_run_keeps_agent_flags(self) -> None:
         args = cli.build_parser().parse_args(["run", "claude", "--dangerously-skip-permissions"])
         self.assertEqual(args.subcommand, "run")
         self.assertEqual(args.command, ["claude", "--dangerously-skip-permissions"])
+
+    def test_code_takes_an_optional_workspace_name(self) -> None:
+        self.assertIsNone(cli.build_parser().parse_args(["code"]).name)
+        self.assertEqual(cli.build_parser().parse_args(["code", "custom"]).name, "custom")
 
     def test_up_defaults_to_current_directory(self) -> None:
         args = cli.build_parser().parse_args(["up"])

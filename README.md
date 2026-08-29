@@ -104,9 +104,9 @@ agentbox run claude
 | `agentbox up [--rebuild]` | Build and start the sandbox for the current directory |
 | `agentbox run <cmd…>` | Run a command inside the sandbox, e.g. `agentbox run claude` |
 | `agentbox shell` | Open a shell inside the sandbox |
-| `agentbox code` | Open Code - OSS / VSCodium / VS Code on the sandbox |
+| `agentbox code [name]` | Open Code - OSS / VSCodium / VS Code on the sandbox |
 | `agentbox down` | Remove the sandbox container |
-| `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` |
+| `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` plus `local` and `default` workspace files |
 
 All commands accept `--workspace <dir>` and otherwise act on the current directory.
 
@@ -172,7 +172,26 @@ The agent extension must run inside the container, otherwise it cannot reach the
 
    Already-installed extensions are skipped, and the rest go in one call rather than one editor launch each.
 
-4. Trust the folder when the editor asks. Until then it runs in Restricted Mode and keeps every extension inert, which looks exactly like a failed install.
+4. `agentbox code` opens a `*.code-workspace` file when the project has one, and the folder otherwise:
+
+   | Call | In the project | Opened |
+   |---|---|---|
+   | `agentbox code` | `local.code-workspace` | that file |
+   | `agentbox code` | only `default.code-workspace` | that file |
+   | `agentbox code` | exactly one other `*.code-workspace` | that file |
+   | `agentbox code` | none | the folder |
+   | `agentbox code` | several, none of them local or default | the folder, with a warning |
+   | `agentbox code custom` | `custom.code-workspace` exists | that file |
+   | `agentbox code custom` | it does not | nothing, with the existing files listed |
+
+   The suffix is optional: `custom` and `custom.code-workspace` mean the same. `agentbox init` seeds both files, each one only if it is missing, and gitignores every workspace file but the default (`*.code-workspace` plus `!default.code-workspace`):
+
+   - `local.code-workspace` is where you work. Add folders to it, keep it out of the repository, break it without consequence — the same role `agentbox.local.json` plays for the container config.
+   - `default.code-workspace` is the project's, versioned like `devcontainer.json`. It is what a fresh clone opens, and what you copy from when the local one goes wrong.
+
+   Both start identical. Their single folder entry is the relative path `.`, which resolves against the directory of the workspace file and is therefore valid both on the host and in the box, where the repository lives under `/workspaces/<project>`. One file, no `vscode-remote://` URIs, no host and box variant to keep in sync.
+
+5. Trust the folder when the editor asks. Until then it runs in Restricted Mode and keeps every extension inert, which looks exactly like a failed install.
 
 Ports change on every rebuild; `agentbox up` rewrites the host entry each time, so the alias stays valid.
 
