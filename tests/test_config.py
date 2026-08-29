@@ -396,10 +396,10 @@ class TestNestedDockerHardening(unittest.TestCase):
 
 
 class TestBoxAgentSettings(unittest.TestCase):
-    def test_the_seeded_settings_free_the_agent_but_hold_history_back(self) -> None:
+    def test_the_seeded_settings_free_the_agent_but_ask_before_history(self) -> None:
         permissions = cfg.BOX_SETTINGS["permissions"]
         self.assertIn("Bash(*)", permissions["allow"])
-        self.assertEqual(permissions["deny"], ["Bash(git commit*)", "Bash(git push*)"])
+        self.assertEqual(permissions["ask"], ["Bash(git commit*)", "Bash(git push*)"])
 
     def test_existing_permissions_are_never_overwritten(self) -> None:
         self.assertIn("if (current.permissions) { process.exit(0); }", cli.SEED_SETTINGS_SCRIPT)

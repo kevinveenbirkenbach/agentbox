@@ -300,10 +300,10 @@ def cmd_up(args: argparse.Namespace) -> int:
     else:
         seeded = seed_agent_settings(workspace, hardened or override)
         if seeded == "seeded":
-            print("→ agents run unrestricted inside the box, commit and push stay denied")
+            print("→ agents run unrestricted inside the box, commit and push ask first")
         if seeded == "failed":
             print("✖ could not write ~/.claude/settings.json in the box", file=sys.stderr)
-            print("  the agent runs on its own defaults there, commit and push are not denied", file=sys.stderr)
+            print("  the agent runs on its own defaults there, commit and push do not ask", file=sys.stderr)
 
     port = ssh_port(cid)
     write_ssh_config(state, alias, port, key_file)

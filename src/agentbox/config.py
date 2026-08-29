@@ -221,7 +221,7 @@ BOX_SETTINGS = {
     "permissions": {
         "defaultMode": "acceptEdits",
         "allow": ["Bash(*)", "Edit", "Read", "Write", "WebFetch", "WebSearch"],
-        "deny": ["Bash(git commit*)", "Bash(git push*)"],
+        "ask": ["Bash(git commit*)", "Bash(git push*)"],
     }
 }
 
