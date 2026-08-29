@@ -1,5 +1,7 @@
 # agentbox
 
+![agentbox](assets/img/logo.png)
+
 Run coding agents in a per-project dev container sandbox.
 
 The agent gets a container with its own Docker daemon and nothing of the host but the project directory: no host Docker socket, no host home, no sibling repositories. One command per project, no per-project boilerplate.
