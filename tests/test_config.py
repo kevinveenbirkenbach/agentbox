@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -400,18 +401,28 @@ class TestBoxAgentSettings(unittest.TestCase):
         self.assertIn("Bash(*)", permissions["allow"])
         self.assertEqual(permissions["deny"], ["Bash(git commit*)", "Bash(git push*)"])
 
-    def test_an_existing_file_is_never_overwritten(self) -> None:
-        self.assertIn("if [ -f ~/.claude/settings.json ]", cli.SEED_SETTINGS_SCRIPT)
-        self.assertIn("cat >/dev/null", cli.SEED_SETTINGS_SCRIPT)
+    def test_existing_permissions_are_never_overwritten(self) -> None:
+        self.assertIn("if (current.permissions) { process.exit(0); }", cli.SEED_SETTINGS_SCRIPT)
+
+    def test_what_post_create_wrote_survives_the_seeding(self) -> None:
+        self.assertIn("{ ...current, ...seed }", cli.SEED_SETTINGS_SCRIPT)
+
+    def test_an_unparseable_file_is_left_untouched(self) -> None:
+        self.assertIn("catch (error) { process.exit(0); }", cli.SEED_SETTINGS_SCRIPT)
 
     def test_seeding_reports_what_the_box_did(self) -> None:
-        wrote = subprocess.CompletedProcess([], 0, stdout="seeded\n", stderr="")
-        with mock.patch.object(cli.subprocess, "run", return_value=wrote):
-            self.assertTrue(cli.seed_agent_settings(Path("/tmp/project"), None))
+        for stdout, expected in (("seeded\n", "seeded"), ("", "kept")):
+            done = subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+            with mock.patch.object(cli.subprocess, "run", return_value=done):
+                self.assertEqual(cli.seed_agent_settings(Path("/tmp/project"), None), expected)
 
-        kept = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        with mock.patch.object(cli.subprocess, "run", return_value=kept):
-            self.assertFalse(cli.seed_agent_settings(Path("/tmp/project"), None))
+    def test_a_box_without_node_is_reported_not_passed_over(self) -> None:
+        broke = subprocess.CompletedProcess([], 127, stdout="", stderr="node: not found")
+        with mock.patch.object(cli.subprocess, "run", return_value=broke):
+            self.assertEqual(cli.seed_agent_settings(Path("/tmp/project"), None), "failed")
+
+    def test_the_scripts_exit_code_survives_the_cleanup(self) -> None:
+        self.assertTrue(cli.SEED_SETTINGS_SCRIPT.endswith("; exit $status"))
 
     def test_the_settings_are_valid_json(self) -> None:
         self.assertEqual(json.loads(cfg.box_settings_json()), cfg.BOX_SETTINGS)
@@ -615,6 +626,57 @@ class TestWorkspaceFile(unittest.TestCase):
             cfg.seed_workspace_files(self.workspace), [self.workspace / cfg.LOCAL_WORKSPACE]
         )
         self.assertEqual(cfg.seed_workspace_files(self.workspace), [])
+
+
+class TestSkillInstall(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name) / "project"
+        self.workspace.mkdir()
+        self.script = cfg.POST_CREATE_SCRIPT.read_text(encoding="utf-8")
+
+    def test_every_box_gets_the_skill_collection_by_default(self) -> None:
+        base = json.loads(cfg.BASE_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(
+            base["containerEnv"]["AGENTBOX_SKILLS"],
+            "https://github.com/kevinveenbirkenbach/skills",
+        )
+
+    def test_post_create_installs_every_listed_repository(self) -> None:
+        self.assertIn("${AGENTBOX_SKILLS:-}", self.script)
+        self.assertIn('TARGET="$HOME" bash "$checkout/scripts/install.sh"', self.script)
+
+    def test_an_unreachable_repository_does_not_fail_the_build(self) -> None:
+        self.assertIn("were not installed — the box is up without them", self.script)
+
+    def test_agents_are_still_required(self) -> None:
+        self.assertIn("${AGENTBOX_AGENTS:?", self.script)
+
+    def test_init_gives_the_project_its_own_copy_of_the_script(self) -> None:
+        args = argparse.Namespace(workspace=self.workspace, force=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(cli, "state_dir", return_value=self.workspace / "state"):
+                self.assertEqual(cli.cmd_init(args), 0)
+
+        config = json.loads((self.workspace / cfg.PROJECT_CONFIG).read_text(encoding="utf-8"))
+        self.assertEqual(config["postCreateCommand"], cfg.PROJECT_POST_CREATE_COMMAND)
+        self.assertIn("AGENTBOX_SKILLS", config["containerEnv"])
+        copied = self.workspace / cfg.PROJECT_POST_CREATE
+        self.assertEqual(copied.read_text(encoding="utf-8"), self.script)
+
+    def test_an_edited_project_script_is_not_overwritten_without_force(self) -> None:
+        (self.workspace / ".devcontainer").mkdir()
+        (self.workspace / cfg.PROJECT_POST_CREATE).write_text("mine\n", encoding="utf-8")
+        args = argparse.Namespace(workspace=self.workspace, force=False)
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            self.assertEqual(cli.cmd_init(args), 1)
+        self.assertEqual(
+            (self.workspace / cfg.PROJECT_POST_CREATE).read_text(encoding="utf-8"), "mine\n"
+        )
+        self.assertFalse((self.workspace / cfg.PROJECT_CONFIG).exists())
+        self.assertIn("--force", captured.getvalue())
 
 
 class TestGitignoreEntries(unittest.TestCase):

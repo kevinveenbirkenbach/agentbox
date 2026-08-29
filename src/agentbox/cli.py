@@ -186,21 +186,35 @@ def harden_nested_docker(source: Path, config: dict) -> Path | None:
     return hardened
 
 
+SEED_FILE = "/tmp/agentbox-seed.json"
 SEED_SETTINGS_SCRIPT = (
-    "mkdir -p ~/.claude; "
-    "if [ -f ~/.claude/settings.json ]; then cat >/dev/null; "
-    "else cat >~/.claude/settings.json && echo seeded; fi"
+    f"mkdir -p ~/.claude && cat >{SEED_FILE} && "
+    "node -e '"
+    'const fs = require("fs");'
+    'const target = process.env.HOME + "/.claude/settings.json";'
+    f'const seed = JSON.parse(fs.readFileSync("{SEED_FILE}", "utf8"));'
+    "let current = {};"
+    "if (fs.existsSync(target)) {"
+    'const raw = fs.readFileSync(target, "utf8").trim();'
+    "if (raw) { try { current = JSON.parse(raw); } catch (error) { process.exit(0); } }"
+    "}"
+    "if (current.permissions) { process.exit(0); }"
+    'fs.writeFileSync(target, JSON.stringify({ ...current, ...seed }, null, 2) + "\\n");'
+    'console.log("seeded");'
+    f"'; status=$?; rm -f {SEED_FILE}; exit $status"
 )
 
 
-def seed_agent_settings(workspace: Path, override: Path | None) -> bool:
+def seed_agent_settings(workspace: Path, override: Path | None) -> str:
     result = subprocess.run(
         exec_command(workspace, override, ["bash", "-c", SEED_SETTINGS_SCRIPT]),
         input=cfg.box_settings_json(),
         capture_output=True,
         text=True,
     )
-    return "seeded" in result.stdout
+    if result.returncode != 0:
+        return "failed"
+    return "seeded" if "seeded" in result.stdout else "kept"
 
 
 def trusted_file(state: Path, alias: str) -> Path:
@@ -283,8 +297,13 @@ def cmd_up(args: argparse.Namespace) -> int:
 
     if cfg.privilege_features(json.loads(source.read_text(encoding="utf-8"))):
         print("→ agent permissions left untouched: a privileged box is no boundary", file=sys.stderr)
-    elif seed_agent_settings(workspace, hardened or override):
-        print("→ agents run unrestricted inside the box, commit and push stay denied")
+    else:
+        seeded = seed_agent_settings(workspace, hardened or override)
+        if seeded == "seeded":
+            print("→ agents run unrestricted inside the box, commit and push stay denied")
+        if seeded == "failed":
+            print("✖ could not write ~/.claude/settings.json in the box", file=sys.stderr)
+            print("  the agent runs on its own defaults there, commit and push are not denied", file=sys.stderr)
 
     port = ssh_port(cid)
     write_ssh_config(state, alias, port, key_file)
@@ -488,17 +507,23 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"→ wrote {seeded}")
 
     target = workspace / cfg.PROJECT_CONFIG
-    if target.exists() and not args.force:
-        print(f"✖ {target} exists, use --force to overwrite", file=sys.stderr)
+    script = workspace / cfg.PROJECT_POST_CREATE
+    existing = [path for path in (target, script) if path.exists()]
+    if existing and not args.force:
+        for path in existing:
+            print(f"✖ {path} exists, use --force to overwrite", file=sys.stderr)
         return 1
     config = cfg.apply_alias(
         json.loads(cfg.BASE_CONFIG.read_text(encoding="utf-8")),
         claim_alias(workspace, state_dir()),
     )
-    config["postCreateCommand"] = "npm install -g $AGENTBOX_AGENTS"
+    config["postCreateCommand"] = cfg.PROJECT_POST_CREATE_COMMAND
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     print(f"→ wrote {target}")
+
+    shutil.copyfile(cfg.POST_CREATE_SCRIPT, script)
+    print(f"→ wrote {script}")
 
     gitignore = workspace / ".gitignore"
     if gitignore.exists():

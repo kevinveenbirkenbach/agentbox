@@ -106,7 +106,7 @@ agentbox run claude
 | `agentbox shell` | Open a shell inside the sandbox |
 | `agentbox code [name]` | Open Code - OSS / VSCodium / VS Code on the sandbox |
 | `agentbox down` | Remove the sandbox container |
-| `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` plus `local` and `default` workspace files |
+| `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` and `post-create.sh`, plus `local` and `default` workspace files |
 
 All commands accept `--workspace <dir>` and otherwise act on the current directory.
 
@@ -146,7 +146,7 @@ Example — this project needs Codex instead of Claude and a Python toolchain, b
 }
 ```
 
-Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start.
+Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start. Skill collections are git repositories listed in `AGENTBOX_SKILLS`, installed alongside them — see [Skills](#skills).
 
 ## Reading a neighbouring repository
 
@@ -235,7 +235,9 @@ The proprietary VS Code build works too — Microsoft publishes matching servers
 
 ## Projects that already have a devcontainer.json
 
-`agentbox up` uses the project's own config unchanged. To install the agents from there, add the feature in this repository:
+`agentbox up` uses the project's own config unchanged, so it runs the project's own `postCreateCommand` and agentbox's share directory is not mounted. `agentbox init` therefore writes a copy of the install script next to the config, as `.devcontainer/post-create.sh`, and points `postCreateCommand` at it — agents and skills are installed from there, and the script is the project's to edit.
+
+For a config agentbox did not write, add the feature in this repository instead. It installs the agents; skills are not part of it, because they land in the home volume and a feature runs before that volume exists:
 
 ```json
 "features": { "ghcr.io/kevinveenbirkenbach/agentbox/agentbox:0": { "agents": "@anthropic-ai/claude-code" } }
@@ -247,7 +249,7 @@ The feature source lives in `features/agentbox/`; publish it with `devcontainer 
 
 A misbehaving agent, reliably. A hostile one, only in part — the difference matters, so here is the honest split.
 
-**Agent permissions belong in the box, not in the repository.** On first start `agentbox up` writes `~/.claude/settings.json` inside the container: everything allowed, `git commit` and `git push` denied. The file lives in the box's home volume, invisible to the host and separate per project, and an existing one is never overwritten. A second, weaker guard inside a container that is already the boundary buys nothing and only costs prompts — which is exactly why the seeding is skipped, with a message, when a project declares nested Docker and the box therefore runs privileged. A privileged box is no boundary, so its agent does not get free rein.
+**Agent permissions belong in the box, not in the repository.** On first start `agentbox up` writes `~/.claude/settings.json` inside the container: everything allowed, `git commit` and `git push` denied. The file lives in the box's home volume, invisible to the host and separate per project. The permissions are merged in beside whatever `postCreateCommand` already put there — skill collections write their plugins and hooks into the same file — and a file that already carries a `permissions` block is left exactly as it is. A second, weaker guard inside a container that is already the boundary buys nothing and only costs prompts — which is exactly why the seeding is skipped, with a message, when a project declares nested Docker and the box therefore runs privileged. A privileged box is no boundary, so its agent does not get free rein.
 
 Keeping this out of the repository's own `.claude/settings.json` matters: that file is read by agents running on the *host* too, where no container protects anything.
 
@@ -298,6 +300,24 @@ yay -S sysbox-ce-bin      # Arch, AUR
 ```
 
 Then `agentbox up --rebuild` and `agentbox run codex`. Agents that are not npm packages (pipx tools, plain binaries) have no install path yet. The Pi agent (`@oh-my-pi/pi-coding-agent`, binary `omp`) needs bun rather than node.
+
+## Skills
+
+Every box installs [kevinveenbirkenbach/skills](https://github.com/kevinveenbirkenbach/skills) on first start, into `~/.claude/skills` and `~/.agents/skills` inside the container. `AGENTBOX_SKILLS` is a space separated list of git repositories; each one is cloned at its default branch and handed to its own `scripts/install.sh` with `TARGET=$HOME`, so a collection decides for itself what installing means — that repository also enables the caveman and ponytail plugins and registers the autotune and dream reminder hooks in the box's `~/.claude/settings.json`.
+
+Override it per project in `.devcontainer/agentbox.local.json` — a different collection, several of them, or none at all:
+
+```json
+{
+  "containerEnv": {
+    "AGENTBOX_SKILLS": ""
+  }
+}
+```
+
+The skills live in the box's home volume, so they survive `agentbox down` and are re-installed on the next `agentbox up --rebuild`. A repository that cannot be cloned or whose installer fails is reported and skipped: the box comes up without it rather than not at all.
+
+Read what a collection contains before running an agent on it. Skills are instructions the agent follows, and the collection pins third-party sources of its own in `skills-lock.json` — inside the box they run with the box's full permissions.
 
 ## Local LLMs
 
