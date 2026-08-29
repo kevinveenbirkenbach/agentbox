@@ -146,6 +146,15 @@ class TestResolveConfig(unittest.TestCase):
         self.assertEqual(config["image"], "debian:bookworm")
         self.assertEqual(config["features"], {"node": {"version": "22"}})
 
+    def test_local_override_keeps_the_project_mounts(self) -> None:
+        home = "source=agentbox-home-project,target=/home/dev,type=volume"
+        extra = "source=/elsewhere,target=/workspaces/elsewhere,type=bind"
+        self._write(cfg.PROJECT_CONFIG, {"image": "debian:bookworm", "mounts": [home]})
+        self._write(cfg.LOCAL_OVERRIDE, {"mounts": [extra]})
+        result = cfg.resolve_config(self.workspace, self.state, self.share, "project")
+        config = json.loads(result.read_text(encoding="utf-8"))
+        self.assertEqual(config["mounts"], [home, extra])
+
     def test_local_override_merges_over_base_config(self) -> None:
         self._write(cfg.LOCAL_OVERRIDE, {"containerEnv": {"AGENTBOX_AGENTS": "@openai/codex"}})
         result = cfg.resolve_config(self.workspace, self.state, self.share, "project")

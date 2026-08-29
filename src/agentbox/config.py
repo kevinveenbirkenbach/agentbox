@@ -126,7 +126,7 @@ def resolve_config(workspace: Path, state_dir: Path, share_dir: Path, alias: str
     if project.exists():
         if not override.exists():
             return None
-        merged = deep_merge(_read_json(project), _read_json(override))
+        merged = apply_override(_read_json(project), _read_json(override))
         target = workspace / MERGED_IN_PROJECT
         target.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
         return target
