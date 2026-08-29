@@ -149,7 +149,7 @@ Example — this project needs Codex instead of Claude and a Python toolchain, b
 }
 ```
 
-Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start. Skill collections are git repositories listed in `AGENTBOX_SKILLS`, installed alongside them — see [Skills](#skills).
+Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start — see [Agents](#agents). Skill collections are git repositories listed in `AGENTBOX_SKILLS`, installed alongside them — see [Skills](#skills).
 
 ## Reading a neighbouring repository
 
@@ -290,19 +290,38 @@ yay -S sysbox-ce-bin      # Arch, AUR
 - Containers started *inside* the sandbox run in its nested Docker daemon; their published ports are not reachable from the host.
 - The agent CLIs themselves are proprietary; only the sandbox around them is open source.
 
-## Other agents
+## Agents
 
-`AGENTBOX_AGENTS` is a space separated list of npm packages installed on first start. Override it per project in `.devcontainer/agentbox.local.json`:
+Five agents are installed into every box on first start:
+
+| Agent | Package | Command | Installed with |
+|---|---|---|---|
+| Claude Code | `@anthropic-ai/claude-code` | `claude` | npm |
+| Codex | `@openai/codex` | `codex` | npm |
+| Gemini CLI | `@google/gemini-cli` | `gemini` | npm |
+| Pi | `@earendil-works/pi-coding-agent` | `pi` | npm |
+| oh-my-pi | `@oh-my-pi/pi-coding-agent` | `omp` | bun |
+
+The last two share a description and a lineage but are different packages: [pi.dev](https://pi.dev) is `@earendil-works/pi-coding-agent`, runs on node and installs `pi`; `@oh-my-pi/pi-coding-agent` is the `can1357/oh-my-pi` fork, needs bun and installs `omp`. Both are here because the end-to-end suite exercises `omp`; dropping either is one word in `AGENTBOX_AGENTS` or `AGENTBOX_BUN_AGENTS`.
+
+`agentbox run codex`, `agentbox run gemini`, `agentbox run pi`, `agentbox run omp`. After changing either list, `agentbox update` installs the difference into the running box — no rebuild.
+
+`AGENTBOX_AGENTS` is a space separated list of npm packages. Override it per project in `.devcontainer/agentbox.local.json` — fewer agents, other agents, or none:
 
 ```json
 {
   "containerEnv": {
-    "AGENTBOX_AGENTS": "@anthropic-ai/claude-code @openai/codex @google/gemini-cli"
+    "AGENTBOX_AGENTS": "@openai/codex"
   }
 }
 ```
 
-Then `agentbox update` and `agentbox run codex` — `agentbox up --rebuild` also works but throws the box away for a change that only adds an npm package. Agents that are not npm packages (pipx tools, plain binaries) have no install path yet. The Pi agent (`@oh-my-pi/pi-coding-agent`, binary `omp`) needs bun rather than node.
+`AGENTBOX_BUN_AGENTS` is the same thing for agents that need [bun](https://bun.sh). oh-my-pi is one: its `dist/cli.js` starts with `#!/usr/bin/env bun` and it declares `engines: {bun: ">=1.3.14"}`, so npm installs it happily and the binary then fails with `env: 'bun': No such file or directory`. bun is fetched only when this list is non-empty, into `$HOME/.local`, because `$HOME/.local/bin` is already on the box's `PATH` and lives in the home volume — no `PATH` surgery, no shell profile edits, and no 80 MB download for a box that does not ask for it.
+
+Agents that are neither npm nor bun packages — pipx tools, `curl | bash` installers, plain binaries — have no install path yet. Two that come up:
+
+- **Hermes Agent** (Nous Research) is a Python project installed with `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`. The npm package named `hermes` is an unrelated 2016 package ("Messenger of the gods."), and `hermes-agent` on npm is an unofficial third-party bridge that says so in its own README. Neither is a default worth shipping.
+- **OpenClaw** installs from npm and works, but it is not a coding agent: it is a messaging gateway that bridges models into WhatsApp, Telegram and Slack, wants an onboarding wizard and a long-lived daemon, and its `attach` subcommand exists to attach *Claude Code* to a gateway session.
 
 ## Skills
 

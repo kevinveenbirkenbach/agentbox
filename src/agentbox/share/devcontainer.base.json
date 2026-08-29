@@ -15,7 +15,8 @@
     "127.0.0.1::2222"
   ],
   "containerEnv": {
-    "AGENTBOX_AGENTS": "@anthropic-ai/claude-code",
+    "AGENTBOX_AGENTS": "@anthropic-ai/claude-code @openai/codex @google/gemini-cli @earendil-works/pi-coding-agent",
+    "AGENTBOX_BUN_AGENTS": "@oh-my-pi/pi-coding-agent",
     "AGENTBOX_SKILLS": "https://github.com/kevinveenbirkenbach/skills"
   },
   "mounts": [

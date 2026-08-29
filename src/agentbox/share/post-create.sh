@@ -12,6 +12,18 @@ else
   npm install -g "${agents[@]}"
 fi
 
+read -r -a bun_agents <<<"${AGENTBOX_BUN_AGENTS:-}"
+
+if [ "${#bun_agents[@]}" -gt 0 ]; then
+  export BUN_INSTALL="$HOME/.local"
+  if [ ! -x "$BUN_INSTALL/bin/bun" ]; then
+    echo "→ installing the bun runtime into $BUN_INSTALL/bin"
+    curl -fsSL https://bun.sh/install | bash
+  fi
+  echo "→ installing bun agents: ${bun_agents[*]}"
+  "$BUN_INSTALL/bin/bun" install -g "${bun_agents[@]}"
+fi
+
 read -r -a skills <<<"${AGENTBOX_SKILLS:-}"
 
 for repo in ${skills[@]+"${skills[@]}"}; do

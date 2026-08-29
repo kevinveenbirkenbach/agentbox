@@ -650,6 +650,38 @@ class TestSkillInstall(unittest.TestCase):
     def test_an_unreachable_repository_does_not_fail_the_build(self) -> None:
         self.assertIn("were not installed — the box is up without them", self.script)
 
+    def test_the_default_agents_cover_claude_codex_gemini_and_pi(self) -> None:
+        base = json.loads(cfg.BASE_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(
+            base["containerEnv"]["AGENTBOX_AGENTS"].split(),
+            [
+                "@anthropic-ai/claude-code",
+                "@openai/codex",
+                "@google/gemini-cli",
+                "@earendil-works/pi-coding-agent",
+            ],
+        )
+
+    def test_pi_is_installed_with_bun_because_its_shebang_demands_it(self) -> None:
+        base = json.loads(cfg.BASE_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(
+            base["containerEnv"]["AGENTBOX_BUN_AGENTS"], "@oh-my-pi/pi-coding-agent"
+        )
+        self.assertIn("${AGENTBOX_BUN_AGENTS:-}", self.script)
+        self.assertIn('"$BUN_INSTALL/bin/bun" install -g "${bun_agents[@]}"', self.script)
+
+    def test_bun_lands_where_the_box_already_looks_for_binaries(self) -> None:
+        self.assertIn('export BUN_INSTALL="$HOME/.local"', self.script)
+
+    def test_a_box_without_bun_agents_never_downloads_bun(self) -> None:
+        self.assertIn('if [ "${#bun_agents[@]}" -gt 0 ]; then', self.script)
+
+    def test_an_existing_bun_is_not_downloaded_again(self) -> None:
+        self.assertIn('if [ ! -x "$BUN_INSTALL/bin/bun" ]; then', self.script)
+
+    def test_update_refreshes_the_bun_agents_too(self) -> None:
+        self.assertIn("AGENTBOX_BUN_AGENTS", cfg.PROVISIONING_ENV)
+
     def test_agents_are_still_required(self) -> None:
         self.assertIn("${AGENTBOX_AGENTS:?", self.script)
 
@@ -724,7 +756,8 @@ class TestUpdate(unittest.TestCase):
     def test_update_carries_the_current_lists_into_an_older_box(self) -> None:
         self._write(cfg.LOCAL_OVERRIDE, '{"containerEnv": {"AGENTBOX_SKILLS": "a b"}}')
         _, called, _ = self._update()
-        self.assertEqual(called[-1], f"AGENTBOX_AGENTS=@anthropic-ai/claude-code AGENTBOX_SKILLS='a b' {cfg.POST_CREATE}")
+        self.assertTrue(called[-1].endswith(f"AGENTBOX_SKILLS='a b' {cfg.POST_CREATE}"))
+        self.assertIn("AGENTBOX_BUN_AGENTS=@oh-my-pi/pi-coding-agent", called[-1])
 
     def test_a_config_without_the_variables_leaves_the_box_env_alone(self) -> None:
         self.assertEqual(cli.with_env(cfg.POST_CREATE, {}), cfg.POST_CREATE)

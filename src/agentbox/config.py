@@ -66,7 +66,7 @@ def workspace_target(workspace: Path) -> str:
     return f"/workspaces/{workspace.resolve().name}"
 
 
-PROVISIONING_ENV = ("AGENTBOX_AGENTS", "AGENTBOX_SKILLS")
+PROVISIONING_ENV = ("AGENTBOX_AGENTS", "AGENTBOX_BUN_AGENTS", "AGENTBOX_SKILLS")
 
 
 def provisioning_env(config: dict) -> dict[str, str]:
