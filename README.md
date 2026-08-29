@@ -194,6 +194,10 @@ The feature source lives in `features/agentbox/`; publish it with `devcontainer 
 
 A misbehaving agent, reliably. A hostile one, only in part — the difference matters, so here is the honest split.
 
+**Agent permissions belong in the box, not in the repository.** On first start `agentbox up` writes `~/.claude/settings.json` inside the container: everything allowed, `git commit` and `git push` denied. The file lives in the box's home volume, invisible to the host and separate per project, and an existing one is never overwritten. A second, weaker guard inside a container that is already the boundary buys nothing and only costs prompts — which is exactly why the seeding is skipped, with a message, when a project declares nested Docker and the box therefore runs privileged. A privileged box is no boundary, so its agent does not get free rein.
+
+Keeping this out of the repository's own `.claude/settings.json` matters: that file is read by agents running on the *host* too, where no container protects anything.
+
 **Held:** the agent reaches the project directory and nothing else of the host. No host home, no sibling repositories, no host Docker socket, no SSH keys, no cloud credentials. `rm -rf` in there costs you the repository, not the machine.
 
 **Not held, and unfixable by construction:** the agent writes files that *you* later execute on the host — `.git/hooks/*` on your next commit, the `Makefile` on your next `make`, `.vscode/tasks.json` when you open the folder locally. Read diffs before running anything, and remember that `.git/hooks` never shows up in one.

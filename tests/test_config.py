@@ -394,6 +394,29 @@ class TestNestedDockerHardening(unittest.TestCase):
         self.assertFalse((self.source.parent / cfg.HARDENED_CONFIG).exists())
 
 
+class TestBoxAgentSettings(unittest.TestCase):
+    def test_the_seeded_settings_free_the_agent_but_hold_history_back(self) -> None:
+        permissions = cfg.BOX_SETTINGS["permissions"]
+        self.assertIn("Bash(*)", permissions["allow"])
+        self.assertEqual(permissions["deny"], ["Bash(git commit*)", "Bash(git push*)"])
+
+    def test_an_existing_file_is_never_overwritten(self) -> None:
+        self.assertIn("if [ -f ~/.claude/settings.json ]", cli.SEED_SETTINGS_SCRIPT)
+        self.assertIn("cat >/dev/null", cli.SEED_SETTINGS_SCRIPT)
+
+    def test_seeding_reports_what_the_box_did(self) -> None:
+        wrote = subprocess.CompletedProcess([], 0, stdout="seeded\n", stderr="")
+        with mock.patch.object(cli.subprocess, "run", return_value=wrote):
+            self.assertTrue(cli.seed_agent_settings(Path("/tmp/project"), None))
+
+        kept = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(cli.subprocess, "run", return_value=kept):
+            self.assertFalse(cli.seed_agent_settings(Path("/tmp/project"), None))
+
+    def test_the_settings_are_valid_json(self) -> None:
+        self.assertEqual(json.loads(cfg.box_settings_json()), cfg.BOX_SETTINGS)
+
+
 class TestTrustGate(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()

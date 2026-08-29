@@ -203,3 +203,16 @@ def write_hardened(source: Path, config: dict) -> Path:
 def config_digest(config: dict) -> str:
     payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+BOX_SETTINGS = {
+    "permissions": {
+        "defaultMode": "acceptEdits",
+        "allow": ["Bash(*)", "Edit", "Read", "Write", "WebFetch", "WebSearch"],
+        "deny": ["Bash(git commit*)", "Bash(git push*)"],
+    }
+}
+
+
+def box_settings_json() -> str:
+    return json.dumps(BOX_SETTINGS, indent=2) + "\n"

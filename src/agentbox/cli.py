@@ -182,6 +182,23 @@ def harden_nested_docker(source: Path, config: dict) -> Path | None:
     return hardened
 
 
+SEED_SETTINGS_SCRIPT = (
+    "mkdir -p ~/.claude; "
+    "if [ -f ~/.claude/settings.json ]; then cat >/dev/null; "
+    "else cat >~/.claude/settings.json && echo seeded; fi"
+)
+
+
+def seed_agent_settings(workspace: Path, override: Path | None) -> bool:
+    result = subprocess.run(
+        exec_command(workspace, override, ["bash", "-c", SEED_SETTINGS_SCRIPT]),
+        input=cfg.box_settings_json(),
+        capture_output=True,
+        text=True,
+    )
+    return "seeded" in result.stdout
+
+
 def trusted_file(state: Path, alias: str) -> Path:
     return state / "trusted" / alias
 
@@ -259,6 +276,12 @@ def cmd_up(args: argparse.Namespace) -> int:
         return 1
 
     inject_key(workspace, override, key_file)
+
+    if cfg.privilege_features(json.loads(source.read_text(encoding="utf-8"))):
+        print("→ agent permissions left untouched: a privileged box is no boundary", file=sys.stderr)
+    elif seed_agent_settings(workspace, hardened or override):
+        print("→ agents run unrestricted inside the box, commit and push stay denied")
+
     port = ssh_port(cid)
     write_ssh_config(state, alias, port, key_file)
     include = ensure_ssh_include(state, Path.home())
