@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -339,6 +340,37 @@ def cmd_shell(args: argparse.Namespace) -> int:
     return cmd_run(args)
 
 
+def with_env(command: str, env: dict[str, str]) -> str:
+    if not env:
+        return command
+    prefix = " ".join(f"{name}={shlex.quote(value)}" for name, value in env.items())
+    return f"{prefix} {command}"
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    blocked = require_binaries(EXEC_BINARIES)
+    if blocked:
+        return blocked
+
+    workspace = args.workspace.resolve()
+    command = cfg.post_create_command(workspace)
+    if command is None:
+        print(f"✖ {cfg.PROJECT_CONFIG} provisions the box itself", file=sys.stderr)
+        print(f"  There is no {cfg.PROJECT_POST_CREATE} to re-run. Run whatever its", file=sys.stderr)
+        print("  postCreateCommand does, or rebuild: agentbox up --rebuild", file=sys.stderr)
+        return 8
+
+    state = state_dir()
+    alias = alias_for(workspace, state)
+    override = cfg.resolve_config(workspace, state / "run", cfg.SHARE_DIR, alias)
+    source = override if override is not None else workspace / cfg.PROJECT_CONFIG
+    env = cfg.provisioning_env(json.loads(source.read_text(encoding="utf-8")))
+
+    print("→ re-running the provisioning inside the running box")
+    args.command = ["bash", "-c", with_env(command, env)]
+    return cmd_run(args)
+
+
 def find_editor() -> str | None:
     for name in EDITORS:
         path = shutil.which(name)
@@ -569,6 +601,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("shell", help="open a shell inside the sandbox").set_defaults(
         func=cmd_shell
     )
+    subparsers.add_parser(
+        "update", help="reinstall the agents and skills in the running sandbox"
+    ).set_defaults(func=cmd_update)
     code = subparsers.add_parser("code", help="open the editor on the sandbox")
     code.add_argument(
         "name",

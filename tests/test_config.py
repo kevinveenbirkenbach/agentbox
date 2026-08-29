@@ -679,6 +679,64 @@ class TestSkillInstall(unittest.TestCase):
         self.assertIn("--force", captured.getvalue())
 
 
+class TestUpdate(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.workspace = self.root / "project"
+        (self.workspace / ".devcontainer").mkdir(parents=True)
+
+    def _write(self, relative: str, payload: str = "{}") -> None:
+        (self.workspace / relative).write_text(payload, encoding="utf-8")
+
+    def _update(self) -> tuple[int, list[str], str]:
+        captured = io.StringIO()
+        done = subprocess.CompletedProcess([], 0)
+        args = argparse.Namespace(workspace=self.workspace)
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            with mock.patch.object(cli, "missing_binaries", return_value=[]):
+                with mock.patch.object(cli, "state_dir", return_value=self.root / "state"):
+                    with mock.patch.object(cli.subprocess, "run", return_value=done) as run:
+                        code = cli.cmd_update(args)
+        called = run.call_args[0][0] if run.call_args else []
+        return code, called, captured.getvalue()
+
+    def test_a_box_on_the_base_config_runs_the_mounted_script(self) -> None:
+        self.assertEqual(cfg.post_create_command(self.workspace), cfg.POST_CREATE)
+
+    def test_a_project_runs_its_own_copy(self) -> None:
+        self._write(cfg.PROJECT_CONFIG)
+        self._write(cfg.PROJECT_POST_CREATE, "echo hi\n")
+        self.assertEqual(cfg.post_create_command(self.workspace), cfg.PROJECT_POST_CREATE_COMMAND)
+
+    def test_a_project_that_provisions_itself_is_not_guessed_at(self) -> None:
+        self._write(cfg.PROJECT_CONFIG)
+        self.assertIsNone(cfg.post_create_command(self.workspace))
+
+    def test_update_execs_the_script_in_the_running_box(self) -> None:
+        code, called, _ = self._update()
+        self.assertEqual(code, 0)
+        self.assertIn("exec", called)
+        self.assertEqual(called[-2], "-c")
+        self.assertTrue(called[-1].endswith(cfg.POST_CREATE))
+
+    def test_update_carries_the_current_lists_into_an_older_box(self) -> None:
+        self._write(cfg.LOCAL_OVERRIDE, '{"containerEnv": {"AGENTBOX_SKILLS": "a b"}}')
+        _, called, _ = self._update()
+        self.assertEqual(called[-1], f"AGENTBOX_AGENTS=@anthropic-ai/claude-code AGENTBOX_SKILLS='a b' {cfg.POST_CREATE}")
+
+    def test_a_config_without_the_variables_leaves_the_box_env_alone(self) -> None:
+        self.assertEqual(cli.with_env(cfg.POST_CREATE, {}), cfg.POST_CREATE)
+
+    def test_update_refuses_rather_than_guess(self) -> None:
+        self._write(cfg.PROJECT_CONFIG)
+        code, called, output = self._update()
+        self.assertEqual(code, 8)
+        self.assertEqual(called, [])
+        self.assertIn("agentbox up --rebuild", output)
+
+
 class TestGitignoreEntries(unittest.TestCase):
     def test_custom_workspace_files_are_ignored_the_default_is_not(self) -> None:
         self.assertEqual(

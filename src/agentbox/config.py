@@ -66,6 +66,23 @@ def workspace_target(workspace: Path) -> str:
     return f"/workspaces/{workspace.resolve().name}"
 
 
+PROVISIONING_ENV = ("AGENTBOX_AGENTS", "AGENTBOX_SKILLS")
+
+
+def provisioning_env(config: dict) -> dict[str, str]:
+    declared = config.get("containerEnv", {})
+    return {name: declared[name] for name in PROVISIONING_ENV if name in declared}
+
+
+def post_create_command(workspace: Path) -> str | None:
+    workspace = workspace.resolve()
+    if not (workspace / PROJECT_CONFIG).exists():
+        return POST_CREATE
+    if (workspace / PROJECT_POST_CREATE).exists():
+        return PROJECT_POST_CREATE_COMMAND
+    return None
+
+
 def deep_merge(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():

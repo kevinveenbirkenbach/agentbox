@@ -104,6 +104,7 @@ agentbox run claude
 | `agentbox up [--rebuild]` | Build and start the sandbox for the current directory |
 | `agentbox run <cmd…>` | Run a command inside the sandbox, e.g. `agentbox run claude` |
 | `agentbox shell` | Open a shell inside the sandbox |
+| `agentbox update` | Reinstall the agents and skills in the running sandbox, without rebuilding it |
 | `agentbox code [name]` | Open Code - OSS / VSCodium / VS Code on the sandbox |
 | `agentbox down` | Remove the sandbox container |
 | `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` and `post-create.sh`, plus `local` and `default` workspace files |
@@ -299,7 +300,7 @@ yay -S sysbox-ce-bin      # Arch, AUR
 }
 ```
 
-Then `agentbox up --rebuild` and `agentbox run codex`. Agents that are not npm packages (pipx tools, plain binaries) have no install path yet. The Pi agent (`@oh-my-pi/pi-coding-agent`, binary `omp`) needs bun rather than node.
+Then `agentbox update` and `agentbox run codex` — `agentbox up --rebuild` also works but throws the box away for a change that only adds an npm package. Agents that are not npm packages (pipx tools, plain binaries) have no install path yet. The Pi agent (`@oh-my-pi/pi-coding-agent`, binary `omp`) needs bun rather than node.
 
 ## Skills
 
@@ -314,6 +315,16 @@ Override it per project in `.devcontainer/agentbox.local.json` — a different c
   }
 }
 ```
+
+`postCreateCommand` runs once, when the container is created, so a running box does not pick up new or changed skills on its own. `agentbox update` re-runs that same provisioning inside the box — the agents are reinstalled at their latest version and every repository in `AGENTBOX_SKILLS` is cloned and installed again:
+
+```bash
+agentbox update
+```
+
+A changed list is picked up too. `containerEnv` is fixed when the container is created, so a box started before the change still carries the old values inside it; `agentbox update` therefore reads `AGENTBOX_AGENTS` and `AGENTBOX_SKILLS` from the merged configuration on the host and passes them in. Adding a collection needs no rebuild, only removing what an earlier run already installed does.
+
+A project that brings its own `devcontainer.json` without a `.devcontainer/post-create.sh` provisions itself, and `agentbox update` says so instead of guessing what to run.
 
 The skills live in the box's home volume, so they survive `agentbox down` and are re-installed on the next `agentbox up --rebuild`. A repository that cannot be cloned or whose installer fails is reported and skipped: the box comes up without it rather than not at all.
 
