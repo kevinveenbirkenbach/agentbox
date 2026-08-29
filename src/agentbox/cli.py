@@ -452,7 +452,13 @@ def remote_extensions(editor: str, alias: str) -> list[str]:
 
 def missing_extensions(wanted: list[str], installed: list[str]) -> list[str]:
     present = {name.lower() for name in installed}
-    return [name for name in wanted if name.lower() not in present]
+    missing = []
+    for name in wanted:
+        if name.lower() in present:
+            continue
+        present.add(name.lower())
+        missing.append(name)
+    return missing
 
 
 def install_arguments(editor: str, alias: str, missing: list[str]) -> list[str]:
@@ -499,8 +505,10 @@ def cmd_code(args: argparse.Namespace) -> int:
 
     override = cfg.resolve_config(workspace, state / "run", cfg.SHARE_DIR, alias)
     source = override if override is not None else workspace / cfg.PROJECT_CONFIG
-    declared = cfg.declared_extensions(json.loads(source.read_text(encoding="utf-8")))
-    sync_extensions(editor, alias, declared or host_extensions(editor))
+    config = json.loads(source.read_text(encoding="utf-8"))
+    declared = cfg.declared_extensions(config)
+    wanted = cfg.agent_extensions(config) + (declared or host_extensions(editor))
+    sync_extensions(editor, alias, wanted)
 
     try:
         target = cfg.resolve_workspace_file(workspace, args.name)

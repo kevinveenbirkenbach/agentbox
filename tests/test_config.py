@@ -480,6 +480,35 @@ class TestExtensionSync(unittest.TestCase):
         self.assertEqual(missing, ["ms-python.python"])
         self.assertEqual(len(missing), 1)
 
+    def test_the_agents_bring_their_ide_extensions(self) -> None:
+        base = json.loads(cfg.BASE_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(
+            cfg.agent_extensions(base),
+            [
+                "Anthropic.claude-code",
+                "openai.chatgpt",
+                "Google.gemini-cli-vscode-ide-companion",
+            ],
+        )
+
+    def test_an_agent_without_an_extension_contributes_none(self) -> None:
+        config = {"containerEnv": {"AGENTBOX_AGENTS": "@oh-my-pi/pi-coding-agent"}}
+        self.assertEqual(cfg.agent_extensions(config), [])
+
+    def test_dropping_an_agent_drops_its_extension(self) -> None:
+        config = {"containerEnv": {"AGENTBOX_AGENTS": "@openai/codex"}}
+        self.assertEqual(cfg.agent_extensions(config), ["openai.chatgpt"])
+
+    def test_a_config_without_agents_wants_no_extension(self) -> None:
+        self.assertEqual(cfg.agent_extensions({}), [])
+
+    def test_the_same_extension_is_not_installed_twice(self) -> None:
+        wanted = ["Anthropic.claude-code", "ms-python.python", "anthropic.claude-code"]
+        self.assertEqual(
+            cli.missing_extensions(wanted, []),
+            ["Anthropic.claude-code", "ms-python.python"],
+        )
+
     def test_install_arguments_repeat_the_flag(self) -> None:
         command = cli.install_arguments("/usr/bin/codium", "demo", ["a.b", "c.d"])
         self.assertEqual(command[:3], ["/usr/bin/codium", "--remote", "ssh-remote+demo"])

@@ -194,10 +194,11 @@ The agent extension must run inside the container, otherwise it cannot reach the
 
 3. `agentbox code` opens the window and installs the extensions the box is missing. A remote window carries its own extension set, so anything installed on the host is inert in there. Which ones it installs:
 
+   - the IDE extension belonging to each agent in `AGENTBOX_AGENTS`, always — an agent CLI without its extension cannot talk to the editor, and mirroring the host cannot supply it because the host window is not the one that matters.
    - `customizations.vscode.extensions` from the effective devcontainer config, if the project declares it — versioned in the repository, the same field every devcontainer client reads.
    - otherwise everything installed on the host, mirrored into the box.
 
-   Already-installed extensions are skipped, and the rest go in one call rather than one editor launch each.
+   Already-installed extensions are skipped, duplicates collapse, and the rest go in one call rather than one editor launch each.
 
 4. `agentbox code` opens a `*.code-workspace` file when the project has one, and the folder otherwise:
 
@@ -294,17 +295,19 @@ yay -S sysbox-ce-bin      # Arch, AUR
 
 Five agents are installed into every box on first start:
 
-| Agent | Package | Command | Installed with |
-|---|---|---|---|
-| Claude Code | `@anthropic-ai/claude-code` | `claude` | npm |
-| Codex | `@openai/codex` | `codex` | npm |
-| Gemini CLI | `@google/gemini-cli` | `gemini` | npm |
-| Pi | `@earendil-works/pi-coding-agent` | `pi` | npm |
-| oh-my-pi | `@oh-my-pi/pi-coding-agent` | `omp` | bun |
+| Agent | Package | Command | Installed with | IDE extension |
+|---|---|---|---|---|
+| Claude Code | `@anthropic-ai/claude-code` | `claude` | npm | `Anthropic.claude-code` |
+| Codex | `@openai/codex` | `codex` | npm | `openai.chatgpt` |
+| Gemini CLI | `@google/gemini-cli` | `gemini` | npm | `Google.gemini-cli-vscode-ide-companion` |
+| Pi | `@earendil-works/pi-coding-agent` | `pi` | npm | none published |
+| oh-my-pi | `@oh-my-pi/pi-coding-agent` | `omp` | bun | none published |
 
 The last two share a description and a lineage but are different packages: [pi.dev](https://pi.dev) is `@earendil-works/pi-coding-agent`, runs on node and installs `pi`; `@oh-my-pi/pi-coding-agent` is the `can1357/oh-my-pi` fork, needs bun and installs `omp`. Both are here because the end-to-end suite exercises `omp`; dropping either is one word in `AGENTBOX_AGENTS` or `AGENTBOX_BUN_AGENTS`.
 
 `agentbox run codex`, `agentbox run gemini`, `agentbox run pi`, `agentbox run omp`. After changing either list, `agentbox update` installs the difference into the running box — no rebuild.
+
+`agentbox code` installs each agent's extension into the box's remote window, derived from `AGENTBOX_AGENTS`, so dropping an agent drops its extension with it. All three are on Open VSX, which is what VSCodium speaks. Both Pi packages publish no editor extension — they are terminal agents, and `pi.dev`'s "extensions" are Pi's own TypeScript modules, not VS Code ones.
 
 `AGENTBOX_AGENTS` is a space separated list of npm packages. Override it per project in `.devcontainer/agentbox.local.json` — fewer agents, other agents, or none:
 

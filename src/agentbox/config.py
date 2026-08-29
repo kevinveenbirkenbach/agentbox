@@ -161,6 +161,18 @@ def declared_extensions(config: dict) -> list[str]:
     return list(vscode.get("extensions", []))
 
 
+AGENT_EXTENSIONS = {
+    "@anthropic-ai/claude-code": "Anthropic.claude-code",
+    "@openai/codex": "openai.chatgpt",
+    "@google/gemini-cli": "Google.gemini-cli-vscode-ide-companion",
+}
+
+
+def agent_extensions(config: dict) -> list[str]:
+    requested = config.get("containerEnv", {}).get("AGENTBOX_AGENTS", "").split()
+    return [AGENT_EXTENSIONS[name] for name in requested if name in AGENT_EXTENSIONS]
+
+
 SAFE_KEYS = frozenset(
     {
         "name",
