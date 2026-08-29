@@ -808,6 +808,110 @@ class TestUpdate(unittest.TestCase):
         self.assertIn("agentbox up --rebuild", output)
 
 
+class TestMount(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.workspace = self.root / "work" / "agentbox"
+        self.workspace.mkdir(parents=True)
+        self.neighbour = self.root / "work" / "other-repo"
+        self.neighbour.mkdir()
+        self.distant = self.root / "elsewhere" / "notes"
+        self.distant.mkdir(parents=True)
+        (self.workspace / cfg.LOCAL_WORKSPACE).write_text(
+            json.dumps(cfg.WORKSPACE_TEMPLATE), encoding="utf-8"
+        )
+
+    def _mount(self, folder: Path) -> tuple[int, str]:
+        captured = io.StringIO()
+        args = argparse.Namespace(workspace=self.workspace, folder=folder)
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            code = cli.cmd_mount(args)
+        return code, captured.getvalue()
+
+    def _override(self) -> dict:
+        return json.loads(
+            (self.workspace / cfg.LOCAL_OVERRIDE).read_text(encoding="utf-8")
+        )
+
+    def test_a_sibling_carries_no_machine_specific_path(self) -> None:
+        self.assertEqual(
+            cfg.mount_source(self.neighbour, self.workspace),
+            "${localWorkspaceFolder}/../other-repo",
+        )
+
+    def test_a_folder_elsewhere_falls_back_to_its_absolute_path(self) -> None:
+        self.assertEqual(
+            cfg.mount_source(self.distant, self.workspace), str(self.distant)
+        )
+
+    def test_the_entry_is_read_only_and_mirrors_the_host_layout(self) -> None:
+        entry = cfg.mount_entry(self.neighbour, self.workspace)
+        self.assertIn("target=/workspaces/other-repo", entry)
+        self.assertTrue(entry.endswith(",type=bind,readonly"))
+
+    def test_mounting_writes_the_override_and_the_workspace_file(self) -> None:
+        code, _ = self._mount(self.neighbour)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            self._override()["mounts"], [cfg.mount_entry(self.neighbour, self.workspace)]
+        )
+        opened = json.loads(
+            (self.workspace / cfg.LOCAL_WORKSPACE).read_text(encoding="utf-8")
+        )
+        self.assertEqual(opened["folders"], [{"path": "."}, {"path": "../other-repo"}])
+
+    def test_mounting_twice_changes_nothing(self) -> None:
+        self._mount(self.neighbour)
+        before = (self.workspace / cfg.LOCAL_OVERRIDE).read_text(encoding="utf-8")
+        code, output = self._mount(self.neighbour)
+        self.assertEqual(code, 0)
+        self.assertIn("already mounts", output)
+        self.assertEqual(
+            (self.workspace / cfg.LOCAL_OVERRIDE).read_text(encoding="utf-8"), before
+        )
+
+    def test_a_second_folder_is_appended(self) -> None:
+        self._mount(self.neighbour)
+        self._mount(self.distant)
+        self.assertEqual(len(self._override()["mounts"]), 2)
+
+    def test_a_folder_inside_the_project_is_refused(self) -> None:
+        inner = self.workspace / "src"
+        inner.mkdir()
+        code, output = self._mount(inner)
+        self.assertEqual(code, 9)
+        self.assertIn("already in the box", output)
+
+    def test_a_name_that_collides_with_the_project_is_refused(self) -> None:
+        collision = self.root / "elsewhere" / "agentbox"
+        collision.mkdir()
+        code, output = self._mount(collision)
+        self.assertEqual(code, 9)
+        self.assertIn("/workspaces/agentbox", output)
+
+    def test_a_missing_folder_is_refused(self) -> None:
+        code, output = self._mount(self.root / "nowhere")
+        self.assertEqual(code, 9)
+        self.assertIn("not a directory", output)
+
+    def test_the_next_step_is_named_because_a_mount_needs_trusting(self) -> None:
+        _, output = self._mount(self.neighbour)
+        self.assertIn("agentbox up --rebuild --trust-config", output)
+
+    def test_an_existing_override_keeps_its_other_settings(self) -> None:
+        (self.workspace / ".devcontainer").mkdir()
+        (self.workspace / cfg.LOCAL_OVERRIDE).write_text(
+            json.dumps({"containerEnv": {"AGENTBOX_AGENTS": "@openai/codex"}}),
+            encoding="utf-8",
+        )
+        self._mount(self.neighbour)
+        self.assertEqual(
+            self._override()["containerEnv"], {"AGENTBOX_AGENTS": "@openai/codex"}
+        )
+
+
 class TestGitignoreEntries(unittest.TestCase):
     def test_custom_workspace_files_are_ignored_the_default_is_not(self) -> None:
         self.assertEqual(

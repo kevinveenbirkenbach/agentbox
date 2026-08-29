@@ -108,6 +108,7 @@ agentbox run claude
 | `agentbox shell` | Open a shell inside the sandbox |
 | `agentbox update` | Reinstall the agents and skills in the running sandbox, without rebuilding it |
 | `agentbox code [name]` | Open Code - OSS / VSCodium / VS Code on the sandbox |
+| `agentbox mount <dir>` | Make a host folder readable inside the sandbox |
 | `agentbox down` | Remove the sandbox container |
 | `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` and `post-create.sh`, plus `local` and `default` workspace files |
 
@@ -155,6 +156,12 @@ Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start �
 
 A window serves exactly one box, so folders from two boxes cannot share one window (see [Editor](#editor)). What works is the other direction: mount the neighbour into the box, read-only.
 
+```bash
+agentbox mount ../other-repo
+```
+
+That writes both halves. The mount goes into `.devcontainer/agentbox.local.json`:
+
 ```json
 {
   "mounts": [
@@ -163,15 +170,21 @@ A window serves exactly one box, so folders from two boxes cannot share one wind
 }
 ```
 
-That goes into `.devcontainer/agentbox.local.json`. `${localWorkspaceFolder}` is the devcontainer CLI's own variable, so the entry carries no machine-specific path and survives being committed. agentbox appends its own mounts — the home volume and the `/agentbox` share — after the merge, so an override that sets `mounts` no longer drops them.
+A folder that sits beside the project becomes `${localWorkspaceFolder}/../<name>`, the devcontainer CLI's own variable, so the entry carries no machine-specific path and survives being committed. A folder from anywhere else gets its absolute path, which is why the file it lands in is gitignored. agentbox appends its own mounts — the home volume and the `/agentbox` share — after the merge, so an override that sets `mounts` no longer drops them.
 
-A workspace file next to it reaches both, on the host and in the box, because the mount target mirrors the layout the repositories already have on the host:
+The other half goes into the workspace file `agentbox code` opens, so the folder shows up in the window:
 
 ```json
 { "folders": [{ "path": "." }, { "path": "../other-repo" }] }
 ```
 
-The first `agentbox up` after this asks for `--trust-config`: a bind mount decides what the box can reach on this host, and an agent with write access to the repository could add one.
+The relative path resolves on both sides because every mount target is `/workspaces/<name>`, mirroring the layout the repositories already have on the host. A folder whose name would land on the project's own target is refused rather than shadowing it, and mounting the same folder twice changes nothing.
+
+Mounts are applied when the container is created, so this needs `agentbox up --rebuild`. It also asks for `--trust-config`: a bind mount decides what the box can reach on this host, and an agent with write access to the repository could add one.
+
+```bash
+agentbox up --rebuild --trust-config
+```
 
 Read-only is the point. The agent in this box reads the neighbour to understand it and cannot change it; the neighbour's own box stays the only place where its code is written.
 

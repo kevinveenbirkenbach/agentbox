@@ -66,6 +66,39 @@ def workspace_target(workspace: Path) -> str:
     return f"/workspaces/{workspace.resolve().name}"
 
 
+WORKSPACE_FOLDER_PLACEHOLDER = "${localWorkspaceFolder}"
+
+
+def mount_source(folder: Path, workspace: Path) -> str:
+    folder, workspace = folder.resolve(), workspace.resolve()
+    if folder.parent == workspace.parent:
+        return f"{WORKSPACE_FOLDER_PLACEHOLDER}/../{folder.name}"
+    return str(folder)
+
+
+def mount_entry(folder: Path, workspace: Path) -> str:
+    source = mount_source(folder, workspace)
+    return f"source={source},target={workspace_target(folder)},type=bind,readonly"
+
+
+def add_mount(override: dict, entry: str) -> dict:
+    mounts = list(override.get("mounts", []))
+    if entry in mounts:
+        return override
+    merged = dict(override)
+    merged["mounts"] = mounts + [entry]
+    return merged
+
+
+def add_workspace_folder(workspace_file: dict, path: str) -> dict:
+    folders = list(workspace_file.get("folders", []))
+    if any(folder.get("path") == path for folder in folders):
+        return workspace_file
+    merged = dict(workspace_file)
+    merged["folders"] = folders + [{"path": path}]
+    return merged
+
+
 PROVISIONING_ENV = ("AGENTBOX_AGENTS", "AGENTBOX_BUN_AGENTS", "AGENTBOX_SKILLS")
 
 
