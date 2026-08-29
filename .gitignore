@@ -5,4 +5,5 @@ __pycache__/
 *.pyc
 *.egg-info/
 .devcontainer/.agentbox.json
+.devcontainer/agentbox.local.json
 local.code-workspace

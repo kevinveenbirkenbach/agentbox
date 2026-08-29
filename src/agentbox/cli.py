@@ -21,6 +21,7 @@ VSCODIUM_PACKAGE = "vscodium-bin"
 SETTINGS_DIRS = (("VSCodium", "Code - OSS"),)
 GITIGNORE_ENTRIES = (
     cfg.MERGED_IN_PROJECT,
+    cfg.LOCAL_OVERRIDE,
     f"*{cfg.WORKSPACE_SUFFIX}",
     f"!{cfg.DEFAULT_WORKSPACE}",
 )

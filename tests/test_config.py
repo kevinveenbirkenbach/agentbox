@@ -916,11 +916,19 @@ class TestGitignoreEntries(unittest.TestCase):
     def test_custom_workspace_files_are_ignored_the_default_is_not(self) -> None:
         self.assertEqual(
             cli.missing_gitignore_entries(""),
-            [cfg.MERGED_IN_PROJECT, "*.code-workspace", "!default.code-workspace"],
+            [
+                cfg.MERGED_IN_PROJECT,
+                cfg.LOCAL_OVERRIDE,
+                "*.code-workspace",
+                "!default.code-workspace",
+            ],
         )
 
+    def test_the_local_override_is_ignored_because_it_can_carry_host_paths(self) -> None:
+        self.assertIn(cfg.LOCAL_OVERRIDE, cli.missing_gitignore_entries(""))
+
     def test_present_entries_are_not_repeated(self) -> None:
-        existing = f"{cfg.MERGED_IN_PROJECT}\n*.code-workspace\n"
+        existing = f"{cfg.MERGED_IN_PROJECT}\n{cfg.LOCAL_OVERRIDE}\n*.code-workspace\n"
         self.assertEqual(cli.missing_gitignore_entries(existing), ["!default.code-workspace"])
 
     def test_a_substring_match_does_not_count_as_present(self) -> None:
