@@ -4,3 +4,5 @@ build/
 __pycache__/
 *.pyc
 *.egg-info/
+.devcontainer/.agentbox.json
+local.code-workspace

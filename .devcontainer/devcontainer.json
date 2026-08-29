@@ -1,0 +1,26 @@
+{
+  "image": "docker.io/library/debian:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "username": "dev",
+      "installZsh": true,
+      "configureZshAsDefaultShell": true
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers/features/sshd:1": {}
+  },
+  "remoteUser": "dev",
+  "appPort": [
+    "127.0.0.1::2222"
+  ],
+  "containerEnv": {
+    "AGENTBOX_AGENTS": "@anthropic-ai/claude-code",
+    "AGENTBOX_SKILLS": "https://github.com/kevinveenbirkenbach/skills"
+  },
+  "mounts": [
+    "source=agentbox-home-agentbox,target=/home/dev,type=volume"
+  ],
+  "name": "agentbox",
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
+}
