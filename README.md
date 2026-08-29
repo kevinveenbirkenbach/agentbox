@@ -409,6 +409,8 @@ Unit tests alone, no containers:
 make test-unit
 ```
 
+They need nothing but python3 and its standard library, and `make test-unit` installs that itself when it is missing — with apt-get or pacman, whichever the system has. A box built from the base image carries `python3-minimal`, which has neither `json` nor `unittest`, so this is what makes the suite runnable inside the box rather than only on the host. When both are already there the step is silent and costs nothing.
+
 End-to-end against real local LLMs, fully isolated in compose — Ollama, LM Studio in headless server mode, and a runner carrying codex and pi. No host network, no API keys, no accounts:
 
 ```bash
