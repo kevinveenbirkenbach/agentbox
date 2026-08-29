@@ -577,6 +577,8 @@ def cmd_mount(args: argparse.Namespace) -> int:
             write_json(target, extended)
             print(f"→ {target.name} now opens {relative} beside the project")
 
+    report_gitignore(seed_gitignore(workspace))
+
     print("\nA mount only takes effect when the container is created, and it widens")
     print("what the box reaches on this host, so it needs reading and approving:")
     print("  agentbox up --rebuild --trust-config")
@@ -621,19 +623,30 @@ def cmd_init(args: argparse.Namespace) -> int:
     shutil.copyfile(cfg.POST_CREATE_SCRIPT, script)
     print(f"→ wrote {script}")
 
-    gitignore = workspace / ".gitignore"
-    if gitignore.exists():
-        missing = missing_gitignore_entries(gitignore.read_text(encoding="utf-8"))
-        if missing:
-            with gitignore.open("a", encoding="utf-8") as handle:
-                handle.write("".join(f"{entry}\n" for entry in missing))
-            print(f"→ added {', '.join(missing)} to .gitignore")
+    report_gitignore(seed_gitignore(workspace))
     return 0
 
 
 def missing_gitignore_entries(existing: str) -> list[str]:
     lines = {line.strip() for line in existing.splitlines()}
     return [entry for entry in GITIGNORE_ENTRIES if entry not in lines]
+
+
+def seed_gitignore(workspace: Path) -> list[str]:
+    gitignore = workspace / ".gitignore"
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    missing = missing_gitignore_entries(existing)
+    if not missing:
+        return []
+    separator = "\n" if existing and not existing.endswith("\n") else ""
+    with gitignore.open("a", encoding="utf-8") as handle:
+        handle.write(separator + "".join(f"{entry}\n" for entry in missing))
+    return missing
+
+
+def report_gitignore(seeded: list[str]) -> None:
+    if seeded:
+        print(f"→ added {', '.join(seeded)} to .gitignore")
 
 
 def build_parser() -> argparse.ArgumentParser:

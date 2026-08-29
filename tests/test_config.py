@@ -896,6 +896,11 @@ class TestMount(unittest.TestCase):
         self.assertEqual(code, 9)
         self.assertIn("not a directory", output)
 
+    def test_mounting_ignores_the_override_it_just_wrote(self) -> None:
+        self._mount(self.neighbour)
+        lines = (self.workspace / ".gitignore").read_text(encoding="utf-8").splitlines()
+        self.assertIn(cfg.LOCAL_OVERRIDE, lines)
+
     def test_the_next_step_is_named_because_a_mount_needs_trusting(self) -> None:
         _, output = self._mount(self.neighbour)
         self.assertIn("agentbox up --rebuild --trust-config", output)
@@ -910,6 +915,38 @@ class TestMount(unittest.TestCase):
         self.assertEqual(
             self._override()["containerEnv"], {"AGENTBOX_AGENTS": "@openai/codex"}
         )
+
+
+class TestSeedGitignore(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+        self.gitignore = self.workspace / ".gitignore"
+
+    def test_a_project_without_a_gitignore_gets_one(self) -> None:
+        seeded = cli.seed_gitignore(self.workspace)
+        self.assertEqual(seeded, list(cli.GITIGNORE_ENTRIES))
+        self.assertTrue(self.gitignore.is_file())
+        self.assertIn(cfg.LOCAL_OVERRIDE, self.gitignore.read_text(encoding="utf-8").splitlines())
+
+    def test_an_existing_gitignore_keeps_its_own_lines(self) -> None:
+        self.gitignore.write_text("*.pyc\n", encoding="utf-8")
+        cli.seed_gitignore(self.workspace)
+        lines = self.gitignore.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[0], "*.pyc")
+        self.assertIn(cfg.LOCAL_OVERRIDE, lines)
+
+    def test_a_missing_final_newline_does_not_glue_the_first_entry_on(self) -> None:
+        self.gitignore.write_text("*.pyc", encoding="utf-8")
+        cli.seed_gitignore(self.workspace)
+        self.assertIn("*.pyc", self.gitignore.read_text(encoding="utf-8").splitlines())
+
+    def test_seeding_twice_adds_nothing(self) -> None:
+        cli.seed_gitignore(self.workspace)
+        before = self.gitignore.read_text(encoding="utf-8")
+        self.assertEqual(cli.seed_gitignore(self.workspace), [])
+        self.assertEqual(self.gitignore.read_text(encoding="utf-8"), before)
 
 
 class TestGitignoreEntries(unittest.TestCase):
