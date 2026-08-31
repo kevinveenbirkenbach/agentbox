@@ -424,6 +424,12 @@ make test-e2e                  # tears the stack down afterwards
 bash tests/e2e/run.sh --keep   # leaves it up for debugging
 ```
 
+It installs what it needs the same way `make test-unit` does: `tests/e2e/run.sh` runs `scripts/install-e2e-deps.sh` before anything else, which adds docker with the compose plugin when it is missing — from Docker's own apt repository, or pacman, whichever the system has — starts the daemon, and puts the caller into the `docker` group, then re-runs itself under `sg docker` so the fresh membership takes effect without a new login. When everything is already there the step is silent.
+
+Inside a box that means nested Docker, so the host needs sysbox (`make host-deps`); without it the box would have to be `--privileged` and would stop being a boundary.
+
+Nesting forces one more thing. A box's uplink can carry a smaller MTU than the 1500 a fresh daemon assumes — 1400 is common — and the oversized frames a build container then sends are dropped without a word: `docker build` dies mid-download with `Connection reset by peer`, which reads like a flaky network and is not one. The script takes the MTU off the default route and pins the daemon to it in `/etc/docker/daemon.json`, restarting it only when that value actually changes.
+
 Models are pulled once into named volumes: `qwen2.5:0.5b` for Ollama, and for LM Studio the Hugging Face repository pinned in `tests/e2e/.env` — its CLI resolves search terms only against staff picks, so the source is a full URL rather than a name. Twelve checks then assert reachability, the native and OpenAI-compatible endpoints, and that codex and pi actually answer from a local model.
 
 The runner shares the LM Studio container's network namespace, so LM Studio sits on `localhost:1234` exactly as the agent CLIs expect while Ollama stays reachable by service name.

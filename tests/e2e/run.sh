@@ -2,7 +2,20 @@
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$E2E_DIR/../.." && pwd)"
 PROJECT="agentbox-e2e"
+
+bash "$REPO_DIR/scripts/install-e2e-deps.sh"
+
+if ! docker info >/dev/null 2>&1; then
+  if [ -n "${AGENTBOX_E2E_GROUP-}" ] || ! command -v sg >/dev/null 2>&1; then
+    echo "✖ this shell cannot reach the docker socket — open a new login shell and retry" >&2
+    exit 1
+  fi
+  echo "→ re-running with the docker group active"
+  export AGENTBOX_E2E_GROUP=1
+  exec sg docker -c "$(printf '%q ' bash "${BASH_SOURCE[0]}" "$@")"
+fi
 
 cd "$E2E_DIR"
 
