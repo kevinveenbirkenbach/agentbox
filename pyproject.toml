@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentboxer"
-version = "1.1.0"
+version = "1.2.0"
 description = "Run coding agents in a per-project dev container sandbox."
 readme = "README.md"
 requires-python = ">=3.10"

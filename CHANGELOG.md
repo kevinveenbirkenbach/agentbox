@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0] - 2026-08-31
+
+- Breaking: *agentbox mount* mounts writable; *--readonly* is the old shape
+- Re-mounting a folder flips its access instead of adding a second entry
+- *make test-e2e* installs docker and the compose plugin when missing
+- Nested Docker: the daemon MTU follows the uplink's, not a fixed 1500
+- Releases are published by hand; the release workflow is gone
+
 ## [1.1.0] - 2026-08-30
 
 - *agentbox mount*: bind-mount a neighbour read-only, plus workspace entry
