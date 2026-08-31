@@ -554,15 +554,16 @@ def cmd_mount(args: argparse.Namespace) -> int:
         print("  rename one of them, or mount it by hand under a different target", file=sys.stderr)
         return 9
 
-    entry = cfg.mount_entry(folder, workspace)
+    entry = cfg.mount_entry(folder, workspace, args.readonly)
+    access = "read-only" if args.readonly else "writable"
     override_path = workspace / cfg.LOCAL_OVERRIDE
     override = read_json_or_empty(override_path)
     updated = cfg.add_mount(override, entry)
     if updated is override:
-        print(f"→ {override_path} already mounts {folder}")
+        print(f"→ {override_path} already mounts {folder} {access}")
     else:
         write_json(override_path, updated)
-        print(f"→ {override_path} now mounts {folder} read-only on {cfg.workspace_target(folder)}")
+        print(f"→ {override_path} now mounts {folder} {access} on {cfg.workspace_target(folder)}")
 
     target = cfg.resolve_workspace_file(workspace)
     if target is None:
@@ -692,8 +693,13 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_down
     )
 
-    mount = subparsers.add_parser("mount", help="mount a host folder into the sandbox read-only")
-    mount.add_argument("folder", type=Path, help="host directory to make readable in the box")
+    mount = subparsers.add_parser("mount", help="mount a host folder into the sandbox")
+    mount.add_argument("folder", type=Path, help="host directory to make writable in the box")
+    mount.add_argument(
+        "--readonly",
+        action="store_true",
+        help="mount it read-only, so the box can read but not change it",
+    )
     mount.set_defaults(func=cmd_mount)
 
     init = subparsers.add_parser("init", help="write a project devcontainer.json")

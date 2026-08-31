@@ -76,17 +76,27 @@ def mount_source(folder: Path, workspace: Path) -> str:
     return str(folder)
 
 
-def mount_entry(folder: Path, workspace: Path) -> str:
+def mount_entry(folder: Path, workspace: Path, readonly: bool) -> str:
     source = mount_source(folder, workspace)
-    return f"source={source},target={workspace_target(folder)},type=bind,readonly"
+    entry = f"source={source},target={workspace_target(folder)},type=bind"
+    return f"{entry},readonly" if readonly else entry
+
+
+def mount_target(entry: str) -> str | None:
+    for field in entry.split(","):
+        if field.startswith("target="):
+            return field.removeprefix("target=")
+    return None
 
 
 def add_mount(override: dict, entry: str) -> dict:
     mounts = list(override.get("mounts", []))
     if entry in mounts:
         return override
+    target = mount_target(entry)
+    remounted = [entry if mount_target(mount) == target else mount for mount in mounts]
     merged = dict(override)
-    merged["mounts"] = mounts + [entry]
+    merged["mounts"] = remounted if remounted != mounts else mounts + [entry]
     return merged
 
 

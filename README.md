@@ -108,7 +108,7 @@ agentbox run claude
 | `agentbox shell` | Open a shell inside the sandbox |
 | `agentbox update` | Reinstall the agents and skills in the running sandbox, without rebuilding it |
 | `agentbox code [name]` | Open Code - OSS / VSCodium / VS Code on the sandbox |
-| `agentbox mount <dir>` | Make a host folder readable inside the sandbox |
+| `agentbox mount [--readonly] <dir>` | Make a host folder available inside the sandbox, writable unless `--readonly` |
 | `agentbox down` | Remove the sandbox container |
 | `agentbox init` | Write a project-owned `.devcontainer/devcontainer.json` and `post-create.sh`, plus `local` and `default` workspace files |
 
@@ -152,9 +152,9 @@ Example — this project needs Codex instead of Claude and a Python toolchain, b
 
 Agents are npm packages listed in `AGENTBOX_AGENTS`, installed on first start — see [Agents](#agents). Skill collections are git repositories listed in `AGENTBOX_SKILLS`, installed alongside them — see [Skills](#skills).
 
-## Reading a neighbouring repository
+## Mounting a neighbouring repository
 
-A window serves exactly one box, so folders from two boxes cannot share one window (see [Editor](#editor)). What works is the other direction: mount the neighbour into the box, read-only.
+A window serves exactly one box, so folders from two boxes cannot share one window (see [Editor](#editor)). What works is the other direction: mount the neighbour into the box.
 
 ```bash
 agentbox mount ../other-repo
@@ -165,7 +165,7 @@ That writes both halves. The mount goes into `.devcontainer/agentbox.local.json`
 ```json
 {
   "mounts": [
-    "source=${localWorkspaceFolder}/../other-repo,target=/workspaces/other-repo,type=bind,readonly"
+    "source=${localWorkspaceFolder}/../other-repo,target=/workspaces/other-repo,type=bind"
   ]
 }
 ```
@@ -186,7 +186,13 @@ Mounts are applied when the container is created, so this needs `agentbox up --r
 agentbox up --rebuild --trust-config
 ```
 
-Read-only is the point. The agent in this box reads the neighbour to understand it and cannot change it; the neighbour's own box stays the only place where its code is written.
+The mount is writable, so the agent in this box can change the neighbour and its git history the way it changes the project. `--readonly` is the narrower shape:
+
+```bash
+agentbox mount --readonly ../other-repo
+```
+
+That appends `,readonly` to the entry, and the box then reads the neighbour to understand it without being able to touch it — its own box stays the only place where its code is written. Re-mounting a folder with the other flag replaces its entry instead of adding a second one on the same target, so the access flips without editing the file by hand.
 
 ## Editor
 
@@ -242,7 +248,7 @@ The agent extension must run inside the container, otherwise it cannot reach the
    - Error: ENOENT: no such file or directory, stat '/workspaces/other'
    ```
 
-   Opened on the host rather than through `agentbox code`, such a file reaches neither box: `No window found with remote authority: ssh-remote+…`. To work across repositories, either put them in one box — run agentbox on the directory above them and let a workspace file pick the subset — or mount the neighbour read-only, see [Reading a neighbouring repository](#reading-a-neighbouring-repository).
+   Opened on the host rather than through `agentbox code`, such a file reaches neither box: `No window found with remote authority: ssh-remote+…`. To work across repositories, either put them in one box — run agentbox on the directory above them and let a workspace file pick the subset — or mount the neighbour into this one, see [Mounting a neighbouring repository](#mounting-a-neighbouring-repository).
 
 Ports change on every rebuild; `agentbox up` rewrites the host entry each time, so the alias stays valid.
 

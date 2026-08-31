@@ -823,9 +823,11 @@ class TestMount(unittest.TestCase):
             json.dumps(cfg.WORKSPACE_TEMPLATE), encoding="utf-8"
         )
 
-    def _mount(self, folder: Path) -> tuple[int, str]:
+    def _mount(self, folder: Path, readonly: bool = False) -> tuple[int, str]:
         captured = io.StringIO()
-        args = argparse.Namespace(workspace=self.workspace, folder=folder)
+        args = argparse.Namespace(
+            workspace=self.workspace, folder=folder, readonly=readonly
+        )
         with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
             code = cli.cmd_mount(args)
         return code, captured.getvalue()
@@ -846,16 +848,40 @@ class TestMount(unittest.TestCase):
             cfg.mount_source(self.distant, self.workspace), str(self.distant)
         )
 
-    def test_the_entry_is_read_only_and_mirrors_the_host_layout(self) -> None:
-        entry = cfg.mount_entry(self.neighbour, self.workspace)
+    def test_the_entry_is_writable_and_mirrors_the_host_layout(self) -> None:
+        entry = cfg.mount_entry(self.neighbour, self.workspace, readonly=False)
         self.assertIn("target=/workspaces/other-repo", entry)
+        self.assertTrue(entry.endswith(",type=bind"))
+
+    def test_the_entry_is_read_only_when_asked(self) -> None:
+        entry = cfg.mount_entry(self.neighbour, self.workspace, readonly=True)
         self.assertTrue(entry.endswith(",type=bind,readonly"))
 
     def test_mounting_writes_the_override_and_the_workspace_file(self) -> None:
-        code, _ = self._mount(self.neighbour)
+        code, output = self._mount(self.neighbour)
         self.assertEqual(code, 0)
         self.assertEqual(
-            self._override()["mounts"], [cfg.mount_entry(self.neighbour, self.workspace)]
+            self._override()["mounts"],
+            [cfg.mount_entry(self.neighbour, self.workspace, readonly=False)],
+        )
+        self.assertIn("writable", output)
+
+    def test_mounting_read_only_writes_the_read_only_entry(self) -> None:
+        code, output = self._mount(self.neighbour, readonly=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            self._override()["mounts"],
+            [cfg.mount_entry(self.neighbour, self.workspace, readonly=True)],
+        )
+        self.assertIn("read-only", output)
+
+    def test_remounting_the_same_folder_flips_its_access(self) -> None:
+        self._mount(self.neighbour)
+        code, _ = self._mount(self.neighbour, readonly=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            self._override()["mounts"],
+            [cfg.mount_entry(self.neighbour, self.workspace, readonly=True)],
         )
         opened = json.loads(
             (self.workspace / cfg.LOCAL_WORKSPACE).read_text(encoding="utf-8")
